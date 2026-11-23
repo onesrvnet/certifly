@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,10 @@ func TestJoinSyncAndPrincipals(t *testing.T) {
 	}
 	if state.HostID != "host-1" || state.HostGroup.Slug != "prod" {
 		t.Fatalf("state: %+v", state)
+	}
+	// The running sshd only picks up the drop-in when it is reloaded.
+	if !slices.Contains(steps, "sshd reloaded") {
+		t.Fatalf("join did not reload sshd: %q", steps)
 	}
 
 	cert, err := os.ReadFile(filepath.Join(p.SSHDir(), "ssh_host_ed25519_key-cert.pub"))

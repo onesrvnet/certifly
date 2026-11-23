@@ -192,6 +192,12 @@ func Join(ctx context.Context, p Paths, server, token string, hostnames []string
 	if _, err := apply(ctx, p, client, &state, sync, keys, report); err != nil {
 		return &state, err
 	}
+	// Always, not only when a file changed: a host that joins again may already have certifly's
+	// files from an earlier attempt that never reached the running sshd.
+	if err := ReloadSSHD(p); err != nil {
+		return &state, err
+	}
+	report(Step{Text: "sshd reloaded"})
 	if install {
 		if err := Install(p, report); err != nil {
 			return &state, err
