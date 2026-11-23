@@ -57,7 +57,7 @@ async function skKey(application = 'ssh:'): Promise<{ key: SshPublicKey; raw: Ui
   return { key: await parseAuthorizedKey(`sk-ssh-ed25519@openssh.com ${btoa(String.fromCharCode(...blob))} yubikey`), raw }
 }
 
-async function attestationFile(raw: Uint8Array, opts: { application?: string; aaguid?: Uint8Array; challenge?: Uint8Array<ArrayBuffer>; auth?: Awaited<ReturnType<typeof authority>> } = {}) {
+async function attestationFile(raw: Uint8Array, opts: { application?: string; aaguid?: Uint8Array; challenge?: Uint8Array<ArrayBuffer>; auth?: Awaited<ReturnType<typeof authority>>; cbor?: boolean } = {}) {
   const auth = opts.auth ?? (await authority())
   const rpIdHash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(opts.application ?? 'ssh:')))
   const credId = new Uint8Array(32).fill(3)
@@ -70,14 +70,29 @@ async function attestationFile(raw: Uint8Array, opts: { application?: string; aa
     .string('ssh-sk-attest-v01')
     .string(new Uint8Array(auth.leaf.rawData))
     .string(signature)
-    .string(authdata)
+    .string(opts.cbor ? cborBytes(authdata) : authdata)
     .uint32(0)
     .string(new Uint8Array(0))
     .toBytes()
   return { file, auth, extra_roots: [auth.root.toString('pem')] }
 }
 
+/** A CBOR byte string (major type 2) around data, the way libfido2 hands authenticator data to OpenSSH. */
+function cborBytes(data: Uint8Array): Uint8Array {
+  const n = data.byteLength
+  const header = n < 24 ? [0x40 | n] : n < 256 ? [0x58, n] : [0x59, n >> 8, n & 0xff]
+  return Uint8Array.of(...header, ...data)
+}
+
 describe('FIDO attestation', () => {
+  it('accepts the CBOR-wrapped authenticator data that ssh-keygen writes', async () => {
+    const { key, raw } = await skKey()
+    const { file, extra_roots } = await attestationFile(raw, { cbor: true })
+    const result = await verifyFidoAttestation({ attestation: file, key, challenge: CHALLENGE, extra_roots })
+    expect(result.aaguid).toBe('0102030405060708090a0b0c0d0e0f10')
+    expect(result.user_present).toBe(true)
+  })
+
   it('accepts a genuine attestation for the key', async () => {
     const { key, raw } = await skKey()
     const { file, extra_roots } = await attestationFile(raw)

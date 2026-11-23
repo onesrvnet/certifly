@@ -81,6 +81,22 @@ interface AuthData {
   family: 'ed25519' | 'ecdsa'
 }
 
+/**
+ * OpenSSH writes the authenticator data as libfido2 hands it over: CBOR-encoded, a byte string
+ * around the raw data. Older files and other tools store it raw. The wrapper is taken off only
+ * when the whole field is exactly one byte string, which raw data (it starts with a hash) is not.
+ */
+function rawAuthData(data: Uint8Array): Uint8Array {
+  if (data.byteLength === 0 || data[0]! >> 5 !== 2) return data
+  try {
+    const { value, end } = readCbor(data, 0)
+    if (value instanceof Uint8Array && end === data.byteLength) return value
+  } catch {
+    // Not CBOR: raw data.
+  }
+  return data
+}
+
 function parseAuthData(data: Uint8Array): AuthData {
   if (data.byteLength < 37) bad('The authenticator data is too short')
   const flags = data[32]!
@@ -214,6 +230,7 @@ export async function verifyFidoAttestation(params: VerifyFidoAttestationParams)
     bad('The attestation file is malformed')
   }
 
+  authdata = rawAuthData(authdata)
   const auth = parseAuthData(authdata)
   const applicationHash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes(new TextEncoder().encode(key.application))))
   if (toHex(auth.rp_id_hash) !== toHex(applicationHash)) bad('The attestation belongs to another application')
