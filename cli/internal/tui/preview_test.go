@@ -132,3 +132,18 @@ func TestSSHStep(t *testing.T) {
 		t.Fatal("SSH step incomplete")
 	}
 }
+
+// On first start the server field takes typing through the whole TUI, without a click or key to focus it.
+func TestServerFieldTakesTypingOnFirstStart(t *testing.T) {
+	t.Setenv("CERTIFLY_CONFIG_DIR", t.TempDir())
+	a, _ := app.Load()
+	var m tea.Model = New(a)
+	m.Init()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	for _, r := range "certifly.int.onesrv.net" {
+		m, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if out := frame(m); !strings.Contains(out, "❯ certifly.int.onesrv.net") {
+		t.Fatalf("the typed server name is missing:\n%s", out)
+	}
+}

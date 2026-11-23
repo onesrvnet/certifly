@@ -58,7 +58,7 @@ func root() *cobra.Command {
 		},
 	}
 	cmd.PersistentFlags().BoolVar(&insecureHTTP, "insecure-http", false, "allow a plain-http server (the session token, CA keys and KRL travel unprotected)")
-	cmd.AddCommand(loginCmd(), logoutCmd(), renewCmd(), statusCmd(), lsCmd(), sshCmd(), configCmd(), yubikeyCmd(), hostCmd())
+	cmd.AddCommand(loginCmd(), logoutCmd(), renewCmd(), statusCmd(), lsCmd(), sshCmd(), configCmd(), yubikeyCmd(), hostCmd(), updateCmd())
 	return cmd
 }
 

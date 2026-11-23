@@ -79,16 +79,19 @@ func newLoginModel(a *app.App, t Theme) loginModel {
 	m := loginModel{app: a, theme: t, server: in, results: map[string]certs.Result{}}
 	if a.Config.Server == "" {
 		m.step = stepServer
+		// Focus here: Init has a value receiver, so focusing there would only focus a copy and
+		// the field would ignore every key.
+		m.server.Focus()
 	} else {
 		m.step = stepApprove
 	}
 	return m
 }
 
-// Init focuses the server field on first start, or starts the sign-in right away.
+// Init starts the server field's cursor on first start, or the sign-in right away.
 func (m loginModel) Init() tea.Cmd {
 	if m.step == stepServer {
-		return m.server.Focus()
+		return textinput.Blink
 	}
 	return m.start()
 }

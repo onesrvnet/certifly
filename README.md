@@ -108,7 +108,7 @@ The depth is up to you: a root with one issuing CA works just as well.
 ### The command-line tool
 
 ```sh
-brew install onesrvnet/tap/certifly   # or download a release from GitHub
+brew install onesrvnet/tap/certifly   # or see "Installing the CLI" below
 certifly login --server certifly.example.com
 certifly                              # pick a host and connect
 ```
@@ -185,6 +185,20 @@ the only proxy in front of certifly.
 Then open `https://certifly.example.com/setup?token=<SETUP_TOKEN>`, create your account and
 remove `SETUP_TOKEN` from `.env`. Database migrations run whenever the container starts, so
 updating is `docker compose pull && docker compose up -d`.
+
+### Installing the CLI
+
+macOS: `brew install onesrvnet/tap/certifly`, updated with `brew upgrade certifly`.
+
+Linux (and macOS without Homebrew):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/onesrvnet/certifly/main/cli/install.sh | sh
+```
+
+It installs the latest release to `/usr/local/bin` (with sudo if needed) after checking its
+SHA-256 checksum. Set `INSTALL_DIR` for another folder or `CERTIFLY_VERSION` for a specific
+release. `certifly update` installs newer releases later; the TUI shows when one is out.
 
 ## Configuration
 

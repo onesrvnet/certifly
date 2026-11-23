@@ -12,6 +12,7 @@ import (
 
 	"github.com/onesrvnet/certifly/cli/internal/app"
 	"github.com/onesrvnet/certifly/cli/internal/certs"
+	"github.com/onesrvnet/certifly/cli/internal/update"
 )
 
 type screen int
@@ -41,6 +42,7 @@ type (
 	execDoneMsg struct{ err error }
 	tickMsg     time.Time
 	flashMsg    struct{}
+	updateMsg   struct{ version, command string }
 )
 
 // Model is the root of the person's TUI.
@@ -63,6 +65,9 @@ type Model struct {
 	spin     spinner.Model
 	err      error
 	flash    string
+
+	// A newer release and the command that installs it, once the daily check found one.
+	newVersion, updateCommand string
 }
 
 // New builds the TUI; it opens on the sign-in screen unless the session is still valid.
@@ -90,13 +95,30 @@ func newSpinner(t Theme) spinner.Model {
 
 // Init asks the terminal for its background (for light or dark styles) and starts loading.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.spin.Tick, tick()}
+	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.spin.Tick, tick(), checkUpdate()}
 	if m.screen == screenMain {
 		cmds = append(cmds, m.fetch())
 	} else {
 		cmds = append(cmds, m.login.Init())
 	}
 	return tea.Batch(cmds...)
+}
+
+// checkUpdate looks for a newer release, at most once a day (update.Available remembers).
+func checkUpdate() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		version, ok := update.Available(ctx, app.Version, update.CachePath(), time.Now())
+		if !ok {
+			return nil
+		}
+		command := "certifly update"
+		if exe, err := update.Executable(); err == nil {
+			command = update.Command(exe)
+		}
+		return updateMsg{version: version, command: command}
+	}
 }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
@@ -163,6 +185,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 	case flashMsg:
 		m.flash = ""
+		return m, nil
+	case updateMsg:
+		m.newVersion, m.updateCommand = msg.version, msg.command
 		return m, nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -389,6 +414,11 @@ func (m Model) sidebar(height int) string {
 				b.WriteString(name + t.Dim.Render(fmt.Sprintf("%7s ", shortDuration(left))) + t.dot("ok") + "\n")
 			}
 		}
+	}
+	if m.newVersion != "" {
+		b.WriteString("\n" + t.Section.Render(" Update") + "\n")
+		b.WriteString(t.Warn.Render(" "+truncate(m.newVersion+" available", sidebarWidth-2)) + "\n")
+		b.WriteString(t.Dim.Render(" "+truncate(m.updateCommand, sidebarWidth-2)) + "\n")
 	}
 	return lipgloss.NewStyle().Width(sidebarWidth).Height(height).Render(b.String())
 }
