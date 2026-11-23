@@ -136,8 +136,9 @@ onMounted(async () => {
 </script>
 
 <template>
+  <!-- Asked for from inside other dialogs too; its portal comes first in the page, so it needs a higher layer to stay on top. -->
   <Dialog :open="reauth.open" @update:open="onOpenChange">
-    <DialogContent class="sm:max-w-md">
+    <DialogContent class="z-60 sm:max-w-md" overlay-class="z-60">
       <DialogHeader>
         <DialogTitle>{{ t('reauth.dialogTitle') }}</DialogTitle>
         <DialogDescription>{{ t('reauth.dialogDescription') }}</DialogDescription>
