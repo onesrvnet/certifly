@@ -348,11 +348,11 @@ describe.skipIf(!OPENSSL_VERSION)('externally signed CA checked with OpenSSL', {
   afterAll(() => tmp.cleanup())
 
   /** Signs a CSR with the OpenSSL root the way an offline root operator would. */
-  function signWithRoot(csrPem: string, name: string, extensions: string): string {
+  function signWithRoot(csrPem: string, name: string, extensions: string, root = 'ext-root'): string {
     tmp.write(`${name}.csr`, csrPem)
     tmp.write(`${name}.ext`, `[v3_ca]\n${extensions}\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n`)
     opensslOk(
-      ['x509', '-req', '-in', `${name}.csr`, '-CA', 'ext-root.pem', '-CAkey', 'ext-root.key', '-set_serial', '0x1234' + Math.floor(Math.random() * 1e6), '-days', '1825', '-extfile', `${name}.ext`, '-extensions', 'v3_ca', '-out', `${name}.pem`],
+      ['x509', '-req', '-in', `${name}.csr`, '-CA', `${root}.pem`, '-CAkey', `${root}.key`, '-set_serial', '0x1234' + Math.floor(Math.random() * 1e6), '-days', '1825', '-extfile', `${name}.ext`, '-extensions', 'v3_ca', '-out', `${name}.pem`],
       { cwd: tmp.dir },
     )
     return opensslOk(['x509', '-in', `${name}.pem`], { cwd: tmp.dir })
@@ -421,6 +421,20 @@ describe.skipIf(!OPENSSL_VERSION)('externally signed CA checked with OpenSSL', {
     })
     tmp.write('ext-l3.pem', l3Cert.pem)
     opensslOk(['verify', '-CAfile', 'ext-root.pem', '-untrusted', 'ext-l2b.pem', 'ext-l3.pem'], { cwd: tmp.dir })
+  })
+
+  it('accepts a root without a key usage extension, which RFC 5280 leaves unrestricted', async () => {
+    tmp.write('legacy.cnf', '[req]\ndistinguished_name=dn\nx509_extensions=v3\n[dn]\n[v3]\nbasicConstraints=CA:TRUE\n')
+    opensslOk(['req', '-x509', '-config', 'legacy.cnf', '-newkey', 'rsa:2048', '-noenc', '-keyout', 'legacy-root.key', '-out', 'legacy-root.pem', '-days', '3650', '-subj', '/CN=Legacy Test Root'], { cwd: tmp.dir })
+    const rootText = opensslOk(['x509', '-in', 'legacy-root.pem', '-noout', '-text'], { cwd: tmp.dir })
+    expect(rootText).not.toMatch(/Key Usage/)
+    expect(rootText).toMatch(/Basic Constraints:\s+CA:TRUE/)
+    const csr = await buildCaCsr({ signer: key.signer, public_key_spki: key.public_key_spki, subject, path_length: 0, name_constraints: constraints })
+    const certPem = signWithRoot(csr.pem, 'ext-l2-legacy', good, 'legacy-root')
+    const rootPem = opensslOk(['x509', '-in', 'legacy-root.pem'], { cwd: tmp.dir })
+    const result = await validateImportedCaCertificate(certPem, rootPem, { public_key_spki: key.public_key_spki, path_length: 0, subject })
+    expect(result.errors).toEqual([])
+    opensslOk(['verify', '-CAfile', 'legacy-root.pem', 'ext-l2-legacy.pem'], { cwd: tmp.dir })
   })
 
   it.each([

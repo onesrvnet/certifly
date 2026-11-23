@@ -83,9 +83,14 @@ export function keyUsages(cert: x509.X509Certificate): KeyUsageName[] | null {
   return ext ? keyUsageNames(ext.usages) : null
 }
 
-/** Whether the certificate may sign certificates: CA=true and keyCertSign (RFC 5280 §4.2.1.3, §4.2.1.9). */
+/**
+ * Whether the certificate may sign certificates: CA=true, and keyCertSign when it has a key usage
+ * extension (RFC 5280 §4.2.1.3, §4.2.1.9). Without the extension the key is not restricted; older
+ * roots often leave it out.
+ */
 export function canSignCertificates(cert: x509.X509Certificate): boolean {
-  return basicConstraints(cert)?.ca === true && (keyUsages(cert)?.includes('key_cert_sign') ?? false)
+  const usages = keyUsages(cert)
+  return basicConstraints(cert)?.ca === true && (usages === null || usages.includes('key_cert_sign'))
 }
 
 /** The issuer's key identifier: its SKI extension, or the RFC 5280 §4.2.1.2 method 1 hash. */
