@@ -1,0 +1,7 @@
+**/node_modules
+**/.nuxt
+**/.nuxt-test*
+**/.output
+**/.data
+.git
+.env

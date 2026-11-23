@@ -1,0 +1,5 @@
+# Used by compose.caddy.yml. Caddy gets and renews the certificate for the domain by itself.
+{$CERTIFLY_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy certifly:3000
+}

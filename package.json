@@ -1,0 +1,72 @@
+{
+  "name": "certifly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "typecheck": "bun run --filter '@certifly/*' typecheck && nuxt typecheck",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:api": "vitest run --project api",
+    "test:e2e": "vitest run --project e2e",
+    "db:generate": "nuxt db generate",
+    "db:migrate": "nuxt db migrate"
+  },
+  "dependencies": {
+    "@certifly/core": "workspace:*",
+    "@certifly/db": "workspace:*",
+    "@certifly/keyvault": "workspace:*",
+    "@certifly/pki": "workspace:*",
+    "@certifly/shared": "workspace:*",
+    "@fontsource-variable/ibm-plex-sans": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@lucide/vue": "1.52.0",
+    "@nuxthub/core": "0.10.12",
+    "@nuxtjs/i18n": "10.6.0",
+    "@pinia/nuxt": "1.0.2",
+    "@simplewebauthn/browser": "14.0.0",
+    "@vueuse/core": "15.0.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "drizzle-orm": "0.45.3",
+    "nuxt": "4.6.4",
+    "openid-client": "6.8.8",
+    "pinia": "4.0.3",
+    "reka-ui": "2.11.0",
+    "tailwind-merge": "3.7.0",
+    "vue": "3.5.45",
+    "vue-input-otp": "0.4.0",
+    "vue-router": "5.5.1",
+    "vue-sonner": "2.0.9",
+    "zod": "4.6.6"
+  },
+  "devDependencies": {
+    "@nuxt/test-utils": "4.3.3",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.19.1",
+    "acme-client": "^5.4.0",
+    "drizzle-kit": "0.31.11",
+    "postgres": "3.4.9",
+    "shadcn-nuxt": "2.8.2",
+    "tailwindcss": "4.3.3",
+    "tw-animate-css": "1.4.0",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3",
+    "vue-tsc": "3.3.11"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "overrides": {
+    "@esbuild-kit/core-utils": {
+      "esbuild": "0.25.12"
+    }
+  }
+}

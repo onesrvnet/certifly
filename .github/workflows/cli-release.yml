@@ -1,0 +1,90 @@
+name: CLI release
+
+# A version tag (v1.2.3) builds the certifly CLI for Linux, macOS and Windows, signs the macOS
+# binaries (and notarizes them once the App Store Connect key is set), publishes a GitHub release
+# and updates the Homebrew formula.
+#
+# Secrets:
+#   MACOS_SIGN_P12           base64 of the Developer ID Application certificate (.p12)
+#   MACOS_SIGN_PASSWORD      its password
+#   MACOS_NOTARY_ISSUER_ID   App Store Connect API key: issuer ID   } optional: without these three
+#   MACOS_NOTARY_KEY_ID      App Store Connect API key: key ID      } the binaries are signed but not
+#   MACOS_NOTARY_KEY         base64 of the App Store Connect key    } notarized
+#   HOMEBREW_TAP_TOKEN       token with contents write access to onesrvnet/homebrew-tap
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  release:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+          workdir: cli
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: cli/dist/checksums.txt
+
+  homebrew:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: checksums
+      - uses: actions/checkout@v4
+        with:
+          repository: onesrvnet/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Write the formula
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p tap/Formula
+          cli/scripts/homebrew-formula.sh "$version" checksums.txt > tap/Formula/certifly.rb
+      - name: Push to the tap
+        working-directory: tap
+        run: |
+          git config user.name "certifly release"
+          git config user.email "release@users.noreply.github.com"
+          git add Formula/certifly.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "certifly ${GITHUB_REF_NAME}"
+          git push

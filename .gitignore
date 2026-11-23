@@ -1,0 +1,45 @@
+node_modules
+.nuxt
+.nuxt-test*
+.output
+.data
+dist
+.env
+.env.*
+!.env.sample
+*.env
+!*.env.example
+*.log
+.DS_Store
+coverage
+.idea
+# Local scratch files
+tmp/
+
+# AI assistant files (kept local, not part of the repo)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
+AGENTS.md
+GEMINI.md
+.gemini/
+.cursor/
+.cursorrules
+.cursorignore
+.windsurf/
+.windsurfrules
+.github/copilot-instructions.md
+.aider*
+.continue/
+.codex/
+.codegraph/
+
+
+
+# Planning notes, kept local
+docs/
+
+# Go CLI build output
+cli/certifly
+cli/dist/

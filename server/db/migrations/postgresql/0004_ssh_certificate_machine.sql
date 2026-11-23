@@ -1,0 +1,1 @@
+ALTER TABLE "ssh_certificates" ADD COLUMN "machine" text;

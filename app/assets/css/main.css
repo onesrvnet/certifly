@@ -1,0 +1,197 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.5rem;
+  /* Brand colour; the other brand files live in /brand at the repository root. */
+  --brand: #5b47c9;
+  --brand-foreground: #ffffff;
+  --brand-soft: color-mix(in oklab, var(--brand) 9%, var(--background));
+
+  /* Certificate and status states: active, expiring, revoked, pending. */
+  --success: #1d7f55;
+  --success-foreground: #ffffff;
+  --success-soft: color-mix(in oklab, var(--success) 9%, var(--background));
+  --warning: #a35f00;
+  --warning-foreground: #ffffff;
+  --warning-soft: color-mix(in oklab, var(--warning) 9%, var(--background));
+  --danger: #c23a4b;
+  --danger-foreground: #ffffff;
+  --danger-soft: color-mix(in oklab, var(--danger) 9%, var(--background));
+  --info: #2c6bc4;
+  --info-foreground: #ffffff;
+  --info-soft: color-mix(in oklab, var(--info) 9%, var(--background));
+
+  /* Tag colours: muted, so tags never compete with the status colours. */
+  --tag-gray: #6b7280;
+  --tag-blue: #3b6fd1;
+  --tag-teal: #0f8a8a;
+  --tag-green: #3f8f4f;
+  --tag-yellow: #a08300;
+  --tag-orange: #c2620f;
+  --tag-pink: #c2457f;
+  --tag-violet: #7b5ad6;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.22 0.006 265);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
+  --secondary: oklch(0.963 0.004 265);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.966 0.003 265);
+  --muted-foreground: oklch(0.53 0.014 265);
+  --accent: oklch(0.955 0.004 265);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--danger);
+  --border: oklch(0.918 0.004 265);
+  --input: oklch(0.885 0.006 265);
+  --ring: color-mix(in oklab, var(--brand) 60%, transparent);
+  --chart-1: var(--brand);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.974 0.003 265);
+  --sidebar-foreground: oklch(0.3 0.008 265);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--brand-foreground);
+  --sidebar-accent: oklch(0.932 0.005 265);
+  --sidebar-accent-foreground: oklch(0.2 0.006 265);
+  --sidebar-border: oklch(0.925 0.004 265);
+  --sidebar-ring: var(--ring);
+}
+
+.dark {
+  --tag-gray: #9ca3af;
+  --tag-blue: #7ea6ef;
+  --tag-teal: #4fc4c4;
+  --tag-green: #7cc68a;
+  --tag-yellow: #e1c34d;
+  --tag-orange: #f0a160;
+  --tag-pink: #ee8ab8;
+  --tag-violet: #b29cf2;
+  /* Lighter accents so links, states and active items keep contrast on dark surfaces. */
+  --success: color-mix(in oklab, #1d7f55 70%, white);
+  --warning: color-mix(in oklab, #a35f00 60%, white);
+  --danger: color-mix(in oklab, #c23a4b 65%, white);
+  --info: color-mix(in oklab, #2c6bc4 62%, white);
+  --success-soft: color-mix(in oklab, var(--success) 16%, var(--background));
+  --warning-soft: color-mix(in oklab, var(--warning) 16%, var(--background));
+  --danger-soft: color-mix(in oklab, var(--danger) 16%, var(--background));
+  --info-soft: color-mix(in oklab, var(--info) 16%, var(--background));
+  --primary: color-mix(in oklab, var(--brand) 78%, white);
+  --brand-soft: color-mix(in oklab, var(--brand) 16%, var(--background));
+  --background: oklch(0.18 0.005 265);
+  --foreground: oklch(0.95 0.003 265);
+  --card: oklch(0.21 0.006 265);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.22 0.006 265);
+  --popover-foreground: var(--foreground);
+  --secondary: oklch(0.26 0.007 265);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.25 0.006 265);
+  --muted-foreground: oklch(0.7 0.012 265);
+  --accent: oklch(0.26 0.007 265);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--danger);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 14%);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0.006 265);
+  --sidebar-foreground: oklch(0.85 0.006 265);
+  --sidebar-primary: var(--primary);
+  --sidebar-accent: oklch(0.27 0.007 265);
+  --sidebar-accent-foreground: oklch(0.97 0.003 265);
+  --sidebar-border: oklch(1 0 0 / 7%);
+}
+
+@theme inline {
+  --font-sans: 'IBM Plex Sans Variable', 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-soft: var(--info-soft);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'kern', 'liga';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 22%, transparent);
+  }
+}
+
+/*
+ * iOS Safari zooms the page into any form field under 16px when it gets focus, which breaks
+ * the layout until zoomed out again. On touch screens, fields are at least 16px.
+ */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+}

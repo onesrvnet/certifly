@@ -1,0 +1,11 @@
+/* certifly brand tokens. Source of truth for app/assets/css/main.css. */
+:root {
+  --brand: #5b47c9;
+  --brand-foreground: #ffffff; /* 6.58:1 on --brand */
+
+  /* Certificate states */
+  --success: #1d7f55; /* active */
+  --warning: #a35f00; /* expiring */
+  --danger: #c23a4b; /* revoked */
+  --info: #2c6bc4; /* pending */
+}

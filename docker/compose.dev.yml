@@ -1,0 +1,20 @@
+# Development dependencies: docker compose -f docker/compose.dev.yml up -d
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: certifly
+      POSTGRES_PASSWORD: certifly
+      POSTGRES_DB: certifly
+    ports: ["5432:5432"]
+    volumes: [postgres:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certifly"]
+      interval: 5s
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["1025:1025", "8025:8025"]
+
+volumes:
+  postgres:

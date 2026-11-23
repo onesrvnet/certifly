@@ -1,0 +1,29 @@
+# certifly with PostgreSQL. Put your own TLS proxy in front of port 3000, or add Caddy:
+#   docker compose -f compose.yml -f compose.caddy.yml up -d
+# Setup: see "Running it for real" in README.md.
+services:
+  certifly:
+    image: "ghcr.io/onesrvnet/certifly:${CERTIFLY_VERSION:-latest}"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgres://certifly:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/certifly"
+    # Only on this machine: your proxy terminates TLS and forwards here.
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: certifly
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: certifly
+    volumes: ["postgres-data:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certifly"]
+      interval: 5s
+
+volumes:
+  postgres-data:

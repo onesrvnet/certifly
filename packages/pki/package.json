@@ -1,0 +1,17 @@
+{
+  "name": "@certifly/pki",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@certifly/keyvault": "workspace:*",
+    "@peculiar/x509": "3.1.0",
+    "asn1js": "4.0.0",
+    "pkijs": "4.0.1"
+  }
+}

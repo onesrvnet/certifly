@@ -1,0 +1,60 @@
+# GoReleaser for the certifly CLI. CI runs it on a version tag (v1.2.3); see .github/workflows/cli-release.yml.
+version: 2
+project_name: certifly
+
+builds:
+  - id: certifly
+    main: .
+    binary: certifly
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/onesrvnet/certifly/cli/internal/app.Version={{ .Version }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - name_template: "certifly_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - src: ../LICENSE
+      - src: ../README.md
+
+checksum:
+  name_template: checksums.txt
+
+# Signs the macOS binaries from Linux CI, and notarizes them as well once an App Store Connect API
+# key is configured, so downloads open without a Gatekeeper warning. Exactly one entry is active:
+#   - signing secrets only: sign;
+#   - signing secrets and the notary key: sign and notarize;
+#   - neither (forks, test runs): unsigned.
+notarize:
+  macos:
+    - enabled: '{{ and (isEnvSet "MACOS_SIGN_P12") (not (isEnvSet "MACOS_NOTARY_KEY")) }}'
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+    - enabled: '{{ and (isEnvSet "MACOS_SIGN_P12") (isEnvSet "MACOS_NOTARY_KEY") }}'
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
+release:
+  github:
+    owner: onesrvnet
+    name: certifly
+  name_template: "certifly CLI {{ .Version }}"
+
+changelog:
+  disable: true

@@ -1,0 +1,24 @@
+# Adds Caddy in front of certifly with automatic HTTPS (Let's Encrypt) for CERTIFLY_DOMAIN.
+# Ports 80 and 443 must be reachable from the internet for the certificate.
+#   docker compose -f compose.yml -f compose.caddy.yml up -d
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      CERTIFLY_DOMAIN: "${CERTIFLY_DOMAIN:?set CERTIFLY_DOMAIN in .env}"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [certifly]
+
+  certifly:
+    environment:
+      # Caddy sets X-Forwarded-For, so rate limits see the real client address.
+      TRUST_PROXY: "true"
+
+volumes:
+  caddy-data:
+  caddy-config:
