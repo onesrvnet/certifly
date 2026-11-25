@@ -234,6 +234,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.showFlash(msg.err.Error())
 		}
 		return m, m.fetch()
+	case regStartedMsg, regKeyMadeMsg, regSubmittedMsg, regDoneMsg:
+		// The registration's steps belong to Settings, whichever screen is in front.
+		var cmd tea.Cmd
+		m.settings, cmd = m.settings.Update(msg)
+		return m, cmd
+	case skRegisteredMsg:
+		// The renewals refresh the overview once they are done.
+		cmds := []tea.Cmd{m.showFlash("YubiKey registered as " + msg.name)}
+		for _, g := range m.overview.Access.HostGroups {
+			if !certs.UsesSK(m.app.Config, g) {
+				continue
+			}
+			a, g := m.app, g
+			m.certs.pending[g.Slug] = true
+			cmds = append(cmds, func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+				defer cancel()
+				return mintedMsg{res: a.MintOne(ctx, g)}
+			})
+		}
+		if len(cmds) == 1 {
+			cmds = append(cmds, m.fetch())
+		}
+		return m, tea.Batch(cmds...)
 	case settingsSavedMsg:
 		m.setTheme(m.theme.IsDark)
 		return m, tea.Batch(m.showFlash("Settings saved"), m.fetch())
@@ -379,7 +403,7 @@ func (m Model) viewMain(width, height int) string {
 		case tabCerts:
 			content = m.certs.View(inner, m.spin.View())
 		case tabSettings:
-			content = m.settings.View(inner)
+			content = m.settings.View(inner, m.spin.View())
 		}
 	}
 	panel := t.panel(title, panelW, height, true, content)

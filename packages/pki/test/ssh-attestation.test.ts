@@ -105,7 +105,7 @@ describe('FIDO attestation', () => {
   it('refuses a certificate that does not chain to a trusted root', async () => {
     const { key, raw } = await skKey()
     const { file } = await attestationFile(raw)
-    await expect(verifyFidoAttestation({ attestation: file, key, challenge: CHALLENGE })).rejects.toMatchObject({ code: 'invalid_ssh_attestation', message: expect.stringContaining('Yubico root') })
+    await expect(verifyFidoAttestation({ attestation: file, key, challenge: CHALLENGE })).rejects.toMatchObject({ code: 'untrusted_ssh_attestation', message: expect.stringContaining('Yubico root') })
   })
 
   it('refuses an attestation made for another key', async () => {

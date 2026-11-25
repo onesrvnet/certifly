@@ -12,7 +12,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/onesrvnet/certifly/cli/internal/api"
 	"github.com/onesrvnet/certifly/cli/internal/app"
+	"github.com/onesrvnet/certifly/cli/internal/certs"
 	"github.com/onesrvnet/certifly/cli/internal/fake"
 	"github.com/onesrvnet/certifly/cli/internal/host"
 	"github.com/onesrvnet/certifly/cli/internal/session"
@@ -145,5 +147,50 @@ func TestServerFieldTakesTypingOnFirstStart(t *testing.T) {
 	}
 	if out := frame(m); !strings.Contains(out, "❯ certifly.int.onesrv.net") {
 		t.Fatalf("the typed server name is missing:\n%s", out)
+	}
+}
+
+// The YubiKey registration in Settings, while it waits for the browser.
+func TestRegisterYubiKeyScreen(t *testing.T) {
+	t.Setenv("CERTIFLY_CONFIG_DIR", t.TempDir())
+	a, _ := app.Load()
+	a.Config.Server = "https://pki.example.com"
+	m := newSettingsModel(a, NewTheme(true))
+	reg := &certs.Registration{
+		SecurityKeyEnrollment: api.SecurityKeyEnrollment{EnrollmentID: "e-1", UserCode: "KXTP-MZRL", BrowserURL: "https://pki.example.com/cli/security-key/e-1", ExpiresAt: time.Now().Add(9*time.Minute + 42*time.Second)},
+		Upload:                api.SecurityKeyUpload{Attested: true, Model: "YubiKey 5 Series"},
+	}
+	m.reg = &registering{reg: reg, step: regWaiting, opened: true}
+	out := ansi.Strip(m.View(64, "⠋"))
+	t.Log("\n" + out)
+	for _, want := range []string{"Register YubiKey", "✓ Key created on the YubiKey", "✓ Genuine YubiKey 5 Series", "Approve it in your browser:", "K X T P - M Z R L", "/cli/security-key/e-1", "Waiting for approval"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+	if !m.editing() {
+		t.Fatal("global keys must not fire during a registration")
+	}
+	if h := m.help(); h[0][0] != "c" || h[len(h)-1][0] != "esc" {
+		t.Fatalf("help = %v", h)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.reg != nil {
+		t.Fatal("esc did not cancel the registration")
+	}
+}
+
+// A host group that needs a registered YubiKey, when the one in use is not.
+func TestNotRegisteredCard(t *testing.T) {
+	c := newCertsModel(NewTheme(true))
+	g := api.HostGroupAccess{ID: "hg-prod", Slug: "hypeserv", Name: "hypeserv", Logins: []string{"root"}, KeyPolicy: api.KeyPolicySK, MaxTTLSeconds: 24 * 3600}
+	c.setOverview(app.Overview{Access: api.Access{HostGroups: []api.HostGroupAccess{g}}})
+	c.results[g.Slug] = certs.Result{HostGroup: g, UsesSK: true, Err: certs.ErrKeyNotRegistered}
+	out := ansi.Strip(c.View(56, ""))
+	t.Log("\n" + out)
+	for _, want := range []string{"YubiKey, not registered", "! This host group only accepts registered YubiKeys.", "Settings → YubiKey → Register"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q", want)
+		}
 	}
 }

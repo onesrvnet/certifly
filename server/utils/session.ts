@@ -38,6 +38,9 @@ const CLI_ENDPOINTS: ReadonlySet<string> = new Set([
   '/api/v2/ssh_hosts/reachable',
   '/api/v2/ssh_user_certificates/sign',
   '/api/v2/cli_sessions/delete',
+  '/api/v2/ssh_security_key_enrollments/start',
+  '/api/v2/ssh_security_key_enrollments/submit',
+  '/api/v2/ssh_security_key_enrollments/poll',
 ])
 
 /** Start a session for the user and set the session cookie. */

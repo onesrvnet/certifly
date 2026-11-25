@@ -103,11 +103,51 @@ type ReachableHost struct {
 }
 
 type SignRequest struct {
-	HostGroupID          string `json:"host_group_id"`
-	PublicKey            string `json:"public_key"`
-	TTLSeconds           int    `json:"ttl_seconds,omitempty"`
-	Attestation          string `json:"attestation,omitempty"`
-	AttestationChallenge string `json:"attestation_challenge,omitempty"`
+	HostGroupID string `json:"host_group_id"`
+	PublicKey   string `json:"public_key"`
+	TTLSeconds  int    `json:"ttl_seconds,omitempty"`
+}
+
+// SecurityKeyEnrollment is a started security key registration: the challenge for ssh-keygen and
+// what the person approves in the browser.
+type SecurityKeyEnrollment struct {
+	EnrollmentID string `json:"enrollment_id"`
+	// Challenge is base64 of 32 bytes for `ssh-keygen -O challenge=`.
+	Challenge       string    `json:"challenge"`
+	UserCode        string    `json:"user_code"`
+	BrowserURL      string    `json:"browser_url"`
+	IntervalSeconds int       `json:"interval_seconds"`
+	ExpiresAt       time.Time `json:"expires_at"`
+}
+
+// SecurityKeyUpload is the uploaded key as the server checked it, waiting for approval.
+type SecurityKeyUpload struct {
+	ID          string  `json:"id"`
+	Status      string  `json:"status"`
+	UserCode    string  `json:"user_code"`
+	Machine     Machine `json:"machine"`
+	Name        string  `json:"name"`
+	PublicKey   string  `json:"public_key"`
+	Fingerprint string  `json:"fingerprint"`
+	// Model is the YubiKey model, empty without a genuine attestation.
+	Model     string    `json:"model"`
+	Attested  bool      `json:"attested"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// SecurityKey is a registered security key.
+type SecurityKey struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	PublicKey   string `json:"public_key"`
+	Fingerprint string `json:"fingerprint"`
+	Model       string `json:"model"`
+	Attested    bool   `json:"attested"`
+}
+
+type SecurityKeyPoll struct {
+	Status string      `json:"status"`
+	Key    SecurityKey `json:"key"`
 }
 
 type SignedCertificate struct {
@@ -194,6 +234,35 @@ func (c *Client) SignUser(ctx context.Context, req SignRequest) (SignedCertifica
 	}
 	err := c.Call(ctx, "ssh_user_certificates.sign", req, &out)
 	return out.Data, err
+}
+
+func (c *Client) StartSecurityKey(ctx context.Context) (SecurityKeyEnrollment, error) {
+	var out SecurityKeyEnrollment
+	err := c.Call(ctx, "ssh_security_key_enrollments.start", nil, &out)
+	return out, err
+}
+
+// SubmitSecurityKey uploads the key made with the enrollment's challenge; attestation is the
+// base64 of the attestation file, or empty without one. An empty name lets the server pick one.
+func (c *Client) SubmitSecurityKey(ctx context.Context, enrollmentID, publicKey, attestation, name string) (SecurityKeyUpload, error) {
+	in := map[string]any{"enrollment_id": enrollmentID, "public_key": publicKey}
+	if attestation != "" {
+		in["attestation"] = attestation
+	}
+	if name != "" {
+		in["name"] = name
+	}
+	var out struct {
+		Data SecurityKeyUpload `json:"data"`
+	}
+	err := c.Call(ctx, "ssh_security_key_enrollments.submit", in, &out)
+	return out.Data, err
+}
+
+func (c *Client) PollSecurityKey(ctx context.Context, enrollmentID string) (SecurityKeyPoll, error) {
+	var out SecurityKeyPoll
+	err := c.Call(ctx, "ssh_security_key_enrollments.poll", map[string]any{"enrollment_id": enrollmentID}, &out)
+	return out, err
 }
 
 func (c *Client) JoinHost(ctx context.Context, token string, hostnames, publicKeys []string) (HostSync, error) {

@@ -416,6 +416,15 @@
       "create": "Tag created",
       "update": "Tag updated",
       "delete": "Tag deleted"
+    },
+    "ssh_security_keys": {
+      "create": "SSH security key registered",
+      "update": "SSH security key renamed",
+      "revoke": "SSH security key revoked"
+    },
+    "ssh_security_key_enrollments": {
+      "submit": "SSH security key uploaded for approval",
+      "deny": "SSH security key registration denied"
     }
   },
   "settings": {
@@ -488,7 +497,8 @@
     "editUsername": "Edit SSH username",
     "usernameTitle": "SSH username of {name}",
     "usernameSaved": "SSH username of {name} saved",
-    "usernameTip": "The login name this person gets on hosts, in lowercase. System names such as root cannot be used. Principals and rules that use the old name are not changed."
+    "usernameTip": "The login name this person gets on hosts, in lowercase. System names such as root cannot be used. Principals and rules that use the old name are not changed.",
+    "securityKeys": "SSH security keys"
   },
   "errors": {
     "unknown": "Something went wrong. Try again.",
@@ -595,7 +605,7 @@
     "channels_required": "Pick at least one channel.",
     "channel_not_found": "One of the channels no longer exists.",
     "ssh_no_access": "You have no access to this host group.",
-    "ssh_key_policy": "This host group needs a YubiKey key. Use the certifly CLI for attested keys.",
+    "ssh_key_policy": "This host group needs a registered YubiKey. Register one in the certifly CLI under Settings → YubiKey.",
     "ssh_attestation_invalid": "The attestation is not valid.",
     "ssh_key_type": "This key type is not accepted. Use Ed25519, ECDSA P-256 or RSA of 2048 bits and more.",
     "ttl_too_long": "The lifetime is longer than this host group allows.",
@@ -623,7 +633,13 @@
     "invalid_provider_groups": "Provider group names may have up to 200 characters, 50 at most.",
     "cli_login_expired": "This sign-in has expired.",
     "cli_login_denied": "This sign-in was denied.",
-    "cli_token_endpoint": "This is not available with a command-line sign-in."
+    "cli_token_endpoint": "This is not available with a command-line sign-in.",
+    "ssh_key_not_registered": "This YubiKey is not registered. Register it in the certifly CLI under Settings → YubiKey.",
+    "ssh_key_revoked": "This security key was revoked.",
+    "ssh_key_already_registered": "This key is already registered, or was revoked. Create a new key in the certifly CLI.",
+    "ssh_key_enrollment_expired": "This registration has expired.",
+    "ssh_key_enrollment_denied": "This registration was denied.",
+    "ssh_key_enrollment_used": "This registration already has a key."
   },
   "errorPage": {
     "notFoundTitle": "Page not found",
@@ -1958,5 +1974,43 @@
     "deniedTitle": "Sign-in denied",
     "closeTab": "You can close this tab.",
     "expiredTitle": "This sign-in has expired"
+  },
+  "sshSecurityKeys": {
+    "title": "SSH security keys",
+    "description": "YubiKeys you registered from the certifly CLI. Host groups that require a security key only accept these. Register a new one in the CLI: Settings → YubiKey.",
+    "userDescription": "YubiKeys {name} registered from the certifly CLI.",
+    "empty": "No security keys yet. In the certifly CLI, open Settings → YubiKey → Register.",
+    "emptyUser": "{name} has no security keys.",
+    "genuine": "Genuine YubiKey",
+    "securityKey": "Security key",
+    "revoked": "Revoked",
+    "registered": "Registered {date}",
+    "lastUsed": "Last used {time}",
+    "neverUsed": "Never used",
+    "revokedBy": "Revoked {date} by {name}",
+    "revokedByYou": "Revoked {date} by you",
+    "rename": "Rename",
+    "name": "Name",
+    "revoke": "Revoke",
+    "revokeTitle": "Revoke {name}?",
+    "revokeDescription": "certifly stops signing this key. SSH sessions that are already open stay open. | certifly stops signing this key, and its valid certificate goes onto the revocation list right away. SSH sessions that are already open stay open. | certifly stops signing this key, and its {count} valid certificates go onto the revocation list right away. SSH sessions that are already open stay open.",
+    "revokeConfirm": "Revoke key",
+    "revokedToast": "Security key revoked"
+  },
+  "securityKeyApproval": {
+    "title": "Register a YubiKey?",
+    "code": "Code",
+    "machine": "Machine",
+    "machineValue": "{hostname} ({os})",
+    "key": "Key",
+    "model": "Model",
+    "name": "Name",
+    "hint": "Approve only if the code matches the one in your terminal. You will confirm it is you (passkey, email code or sign-in provider).",
+    "deny": "Deny",
+    "approve": "Approve",
+    "approvedTitle": "YubiKey registered",
+    "deniedTitle": "Registration denied",
+    "closeTab": "Go back to the terminal. You can close this tab.",
+    "expiredTitle": "This registration has expired"
   }
 }

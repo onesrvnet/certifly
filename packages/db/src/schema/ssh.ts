@@ -284,3 +284,75 @@ export const cliSessions = pgTable(
   },
   (t) => [index('cli_sessions_user_idx').on(t.user_id), index('cli_sessions_expires_idx').on(t.expires_at)],
 )
+
+/**
+ * Security keys (YubiKeys) a person registered for SSH, approved in the browser. Host groups
+ * that require a security key only sign these. A fingerprint is registered once: a revoked key
+ * stays here, so it cannot be registered again.
+ */
+export const sshSecurityKeys = pgTable(
+  'ssh_security_keys',
+  {
+    id: id(),
+    user_id: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: text().notNull(),
+    /** The public key as `<type> <base64>`. */
+    public_key: text().notNull(),
+    fingerprint: text().notNull(),
+    /** The FIDO application the key was made for, e.g. `ssh:certifly`. */
+    application: text().notNull(),
+    /** Authenticator model from the attestation, lowercase hex; null without one. */
+    aaguid: text(),
+    /** Subject of the attestation certificate, for the audit trail. */
+    attestation_subject: text(),
+    /** The attestation chained to a Yubico root, for the challenge certifly gave out. */
+    attested: boolean().notNull().default(false),
+    /** Host name of the machine whose CLI registered it. */
+    machine: text(),
+    last_used_at: timestamp({ withTimezone: true }),
+    revoked_at: timestamp({ withTimezone: true }),
+    revoked_by_user_id: uuid().references(() => users.id, { onDelete: 'set null' }),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('ssh_security_keys_fingerprint_idx').on(t.fingerprint), index('ssh_security_keys_user_idx').on(t.user_id, t.created_at)],
+)
+
+/**
+ * Registering a security key: the CLI gets a challenge, makes the key with it and uploads the
+ * public key and attestation; the person then approves it in the browser.
+ */
+export const sshSecurityKeyEnrollments = pgTable(
+  'ssh_security_key_enrollments',
+  {
+    id: id(),
+    user_id: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** The CLI session that started it; only that session may upload and poll. */
+    cli_session_id: uuid()
+      .notNull()
+      .references(() => cliSessions.id, { onDelete: 'cascade' }),
+    /** 32 random bytes the CLI hands to `ssh-keygen -O challenge=`. Single use. */
+    challenge: bytea().notNull(),
+    /** Shown in the terminal and on the approval page so the person can compare them. */
+    user_code: text().notNull(),
+    machine_hostname: text().notNull(),
+    machine_os: text().notNull(),
+    status: cliLoginStatus().notNull().default('pending'),
+    /** The uploaded key, until it is approved. */
+    name: text(),
+    public_key: text(),
+    fingerprint: text(),
+    application: text(),
+    aaguid: text(),
+    attestation_subject: text(),
+    attested: boolean().notNull().default(false),
+    submitted_at: timestamp({ withTimezone: true }),
+    ssh_security_key_id: uuid().references(() => sshSecurityKeys.id, { onDelete: 'set null' }),
+    expires_at: timestamp({ withTimezone: true }).notNull(),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('ssh_security_key_enrollments_user_idx').on(t.user_id), index('ssh_security_key_enrollments_expires_idx').on(t.expires_at)],
+)

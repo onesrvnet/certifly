@@ -21,7 +21,7 @@ const USER_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ'
 export type CliLoginRow = typeof schema.cliLogins.$inferSelect
 export type CliSessionRow = typeof schema.cliSessions.$inferSelect
 
-function userCode(): string {
+export function userCode(): string {
   const part = () => Array.from({ length: 4 }, () => USER_CODE_ALPHABET[randomInt(USER_CODE_ALPHABET.length)]).join('')
   return `${part()}-${part()}`
 }

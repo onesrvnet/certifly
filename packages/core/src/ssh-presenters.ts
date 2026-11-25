@@ -1,11 +1,12 @@
 import type { schema } from '@certifly/db'
 import type { CliLoginRow, CliSessionRow } from './cli-auth'
 import type { GroupRow } from './groups'
-import { type Actor, sshAccessPolicy, sshCaPolicy, sshCertificatePolicy, sshHostGroupPolicy, sshHostPolicy, sshJoinTokenPolicy } from './policies'
+import { type Actor, sshAccessPolicy, sshCaPolicy, sshCertificatePolicy, sshHostGroupPolicy, sshHostPolicy, sshJoinTokenPolicy, sshSecurityKeyPolicy } from './policies'
 import type { HostGroupAccess, SshAccessRuleListRow } from './ssh-access'
 import type { SshCaRow } from './ssh-cas'
 import type { SshCertificateListRow, SshCertificateRow } from './ssh-certificates'
 import type { SshHostGroupListRow } from './ssh-host-groups'
+import { securityKeyModel, type SshSecurityKeyEnrollmentRow, type SshSecurityKeyListRow, type SshSecurityKeyRow } from './ssh-security-keys'
 import type { HostSync, SshHostListRow, SshJoinTokenListRow, SshJoinTokenRow } from './ssh-hosts'
 
 type UserRow = typeof schema.users.$inferSelect
@@ -215,5 +216,49 @@ export function presentCliSession(session: CliSessionRow, current: boolean) {
     last_used_at: iso(session.last_used_at),
     current,
     permissions: { delete: true },
+  }
+}
+
+export function presentSshSecurityKey(actor: Actor, key: SshSecurityKeyListRow) {
+  const active = !key.revoked_at
+  return {
+    id: key.id,
+    user_id: key.user_id,
+    name: key.name,
+    public_key: key.public_key,
+    fingerprint: key.fingerprint,
+    application: key.application,
+    model: securityKeyModel(key.aaguid, key.attested),
+    attested: key.attested,
+    machine: key.machine,
+    created_at: key.created_at.toISOString(),
+    last_used_at: iso(key.last_used_at),
+    revoked_at: iso(key.revoked_at),
+    revoked_by: key.revoked_by,
+    active_certificates: key.active_certificates,
+    permissions: {
+      update: active && sshSecurityKeyPolicy.can(actor, 'update', key),
+      revoke: active && sshSecurityKeyPolicy.can(actor, 'revoke', key),
+    },
+  }
+}
+
+/** What the CLI learns about its newly registered key. */
+export function presentRegisteredSecurityKey(key: SshSecurityKeyRow) {
+  return { id: key.id, name: key.name, public_key: key.public_key, fingerprint: key.fingerprint, model: securityKeyModel(key.aaguid, key.attested), attested: key.attested }
+}
+
+export function presentSshSecurityKeyEnrollment(enrollment: SshSecurityKeyEnrollmentRow) {
+  return {
+    id: enrollment.id,
+    status: enrollment.status,
+    user_code: enrollment.user_code,
+    machine: { hostname: enrollment.machine_hostname, os: enrollment.machine_os },
+    name: enrollment.name,
+    public_key: enrollment.public_key,
+    fingerprint: enrollment.fingerprint,
+    model: securityKeyModel(enrollment.aaguid, enrollment.attested),
+    attested: enrollment.attested,
+    expires_at: enrollment.expires_at.toISOString(),
   }
 }

@@ -427,6 +427,8 @@ func (m loginModel) viewCertificates(spin string) string {
 			b.WriteString(line(spin, name, t.Dim.Render("signing …")))
 		case res.Err != nil && errors.Is(res.Err, sshbin.ErrNoFIDO):
 			b.WriteString(line(t.Warn.Render("!"), name, t.Warn.Render("needs an OpenSSH with YubiKey support: ")+t.Key.Render(sshbin.InstallHint())))
+		case res.Err != nil && (errors.Is(res.Err, certs.ErrKeyNotRegistered) || errors.Is(res.Err, certs.ErrKeyRevoked)):
+			b.WriteString(line(t.Warn.Render("!"), name, t.Warn.Render("only accepts registered YubiKeys")+t.Dim.Render(" (Settings → YubiKey → Register)")))
 		case res.Err != nil && errors.Is(res.Err, certs.ErrNoSecurityKey):
 			b.WriteString(line(t.Warn.Render("!"), name, t.Warn.Render("needs a YubiKey key")+t.Dim.Render(" (Settings → YubiKey)")))
 		case res.Err != nil:

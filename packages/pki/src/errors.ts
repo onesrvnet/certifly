@@ -22,6 +22,8 @@ export type PkiErrorCode =
   | 'invalid_ssh_certificate'
   | 'invalid_ssh_signature'
   | 'invalid_ssh_attestation'
+  /** A well-formed attestation from an authenticator that is not a genuine Yubico one. */
+  | 'untrusted_ssh_attestation'
   | 'ssh_key_encrypted'
 
 /** A refusal with a stable code; `details` holds structured, non-secret context. */

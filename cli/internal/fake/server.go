@@ -5,6 +5,7 @@ package fake
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,7 +18,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// Server is the fake. Logins are approved automatically unless Deny is set.
+// Server is the fake. Logins and YubiKey registrations are approved automatically unless Deny
+// or DenyKey is set.
 type Server struct {
 	*httptest.Server
 	mu         sync.Mutex
@@ -32,6 +34,11 @@ type Server struct {
 	nonce      string
 	serial     uint64
 	pollsUntil int
+	DenyKey    bool
+	// Registered holds the fingerprints of approved YubiKeys; the prod host group signs only these.
+	Registered map[string]bool
+	keyUpload  string
+	keyPolls   int
 }
 
 // New starts a fake with a prod (YubiKey required) and a staging host group and a few hosts.
@@ -48,6 +55,7 @@ func New() *Server {
 			{ID: "hg-staging", Slug: "staging", Name: "Staging", Logins: []string{"deploy", "flexusma"}, KeyPolicy: api.KeyPolicyAny, DefaultTTLSeconds: 8 * 3600, MaxTTLSeconds: 24 * 3600, Extensions: []string{"permit-pty", "permit-port-forwarding"}, HostPatterns: []string{"*.staging.corp"}, CA: ca},
 		},
 		pollsUntil: 1,
+		Registered: map[string]bool{},
 	}
 	for i, g := range s.Groups {
 		s.Groups[i].Principals = nil
@@ -153,9 +161,54 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "ssh_key_policy")
 			return
 		}
+		if g.NeedsSK() && !s.Registered[ssh.FingerprintSHA256(pub)] {
+			fail(w, 403, "ssh_key_not_registered")
+			return
+		}
 		cert := s.sign(pub, ssh.UserCert, g.Principals, time.Duration(g.DefaultTTLSeconds)*time.Second, "certifly:"+s.User.Email+":"+g.Slug)
 		s.Signed = append(s.Signed, fmt.Sprint(in["public_key"]))
 		ok(w, map[string]any{"data": api.SignedCertificate{ID: "c", Certificate: cert, Serial: fmt.Sprint(s.serial), Principals: g.Principals, ValidBefore: time.Now().Add(time.Duration(g.DefaultTTLSeconds) * time.Second)}})
+	case "ssh_security_key_enrollments.start":
+		if !authed {
+			fail(w, 401, "unauthorized")
+			return
+		}
+		s.keyUpload, s.keyPolls = "", 1
+		challenge := make([]byte, 32)
+		_, _ = rand.Read(challenge)
+		ok(w, api.SecurityKeyEnrollment{EnrollmentID: "e-1", Challenge: base64.StdEncoding.EncodeToString(challenge), UserCode: "KXTP-MZRL", BrowserURL: s.URL + "/cli/security-key/e-1", IntervalSeconds: 1, ExpiresAt: time.Now().Add(10 * time.Minute)})
+	case "ssh_security_key_enrollments.submit":
+		if !authed {
+			fail(w, 401, "unauthorized")
+			return
+		}
+		pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(fmt.Sprint(in["public_key"])))
+		if err != nil || !strings.HasPrefix(pub.Type(), "sk-") {
+			fail(w, 400, "ssh_key_type")
+			return
+		}
+		s.keyUpload = ssh.FingerprintSHA256(pub)
+		_, attested := in["attestation"]
+		model := ""
+		if attested {
+			model = "YubiKey 5 Series"
+		}
+		ok(w, map[string]any{"data": api.SecurityKeyUpload{ID: "e-1", Status: "pending", UserCode: "KXTP-MZRL", Machine: api.Machine{Hostname: "laptop", OS: "darwin"}, Name: "laptop", PublicKey: fmt.Sprint(in["public_key"]), Fingerprint: s.keyUpload, Model: model, Attested: attested, ExpiresAt: time.Now().Add(10 * time.Minute)}})
+	case "ssh_security_key_enrollments.poll":
+		switch {
+		case !authed:
+			fail(w, 401, "unauthorized")
+		case s.DenyKey:
+			fail(w, 403, "ssh_key_enrollment_denied")
+		case s.keyUpload == "":
+			fail(w, 410, "ssh_key_enrollment_expired")
+		case s.keyPolls > 0:
+			s.keyPolls--
+			ok(w, map[string]string{"status": "pending"})
+		default:
+			s.Registered[s.keyUpload] = true
+			ok(w, map[string]any{"status": "approved", "key": api.SecurityKey{ID: "k-1", Name: "laptop", Fingerprint: s.keyUpload, Model: "YubiKey 5 Series", Attested: true}})
+		}
 	case "ssh_hosts.join":
 		if in["token"] != s.JoinToken {
 			fail(w, 401, "invalid_token")

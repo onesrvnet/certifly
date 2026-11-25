@@ -55,6 +55,8 @@ export const LIMITS = {
   sshHost: [300, 60],
   /** Command-line sign-ins starting and polling, per client address. */
   cliLogin: [120, 60],
+  /** Security key registrations started and uploaded, per command-line session. */
+  securityKeyEnrollment: [20, 60],
 } as const satisfies Record<string, readonly [number, number]>
 
 export function limit(event: H3Event, name: keyof typeof LIMITS, key: string) {

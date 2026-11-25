@@ -497,29 +497,62 @@ func setSetting(c *config.Config, key, value string) error {
 }
 
 func yubikeyCmd() *cobra.Command {
-	return &cobra.Command{
+	var name string
+	cmd := &cobra.Command{
 		Use:   "yubikey",
-		Short: "Create an ed25519-sk key on your YubiKey for host groups that require one",
+		Short: "Register a YubiKey for host groups that require one: makes a key on it and approves it in your browser",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, keygen, err := certs.SecurityKeyCommand()
+			a, err := loadApp()
+			if err != nil {
+				return err
+			}
+			if !a.SignedIn() {
+				return app.ErrNotSignedIn
+			}
+			c, cancel := ctx()
+			defer cancel()
+			client := a.Client()
+			reg, keygen, err := certs.StartRegistration(c, client)
 			if err != nil {
 				return err
 			}
 			fmt.Println("Touch your YubiKey when it blinks (ssh-keygen may ask for its PIN).")
 			keygen.Stdin, keygen.Stdout, keygen.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if err := keygen.Run(); err != nil {
+				reg.Discard()
 				return fmt.Errorf("ssh-keygen: %w", err)
 			}
-			c, err := config.Load()
+			if err := reg.Submit(c, client, name); err != nil {
+				reg.Discard()
+				return err
+			}
+			fmt.Println("✓ Key created on the YubiKey")
+			if model := reg.Model(); model != "" {
+				fmt.Println("✓ Genuine " + model)
+			} else {
+				fmt.Println("! Not attested: only for host groups that accept any security key")
+			}
+			if session.OpenBrowser(reg.BrowserURL) {
+				fmt.Println("\nApprove it in your browser:")
+			} else {
+				fmt.Println("\nOpen this link on any device and approve this code:")
+			}
+			fmt.Printf("\n    %s\n\n    %s\n\nWaiting for approval …\n", reg.UserCode, reg.BrowserURL)
+			waitCtx, waitCancel := context.WithDeadline(c, reg.ExpiresAt)
+			defer waitCancel()
+			key, path, err := reg.Wait(waitCtx, client)
 			if err != nil {
 				return err
 			}
-			c.SKKey = path
-			if err := c.Save(); err != nil {
+			a.Config.SKKey = path
+			if err := a.Config.Save(); err != nil {
 				return err
 			}
-			fmt.Println("✓ YubiKey key ready:", path+".pub")
+			fmt.Printf("✓ YubiKey registered as %s (%s)\n", key.Name, key.Fingerprint)
+			fmt.Println("Run `certifly renew` to load its certificates.")
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "name for the key in certifly (default: this machine's host name)")
+	return cmd
 }

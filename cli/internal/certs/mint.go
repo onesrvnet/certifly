@@ -3,12 +3,9 @@ package certs
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,7 +19,13 @@ import (
 )
 
 // ErrNoSecurityKey means a host group needs a security key and none is set up yet.
-var ErrNoSecurityKey = errors.New("this host group needs a YubiKey key; set one up in Settings")
+var ErrNoSecurityKey = errors.New("this host group needs a YubiKey key; register one with `certifly yubikey` or in Settings → YubiKey")
+
+// ErrKeyNotRegistered means the host group only signs registered YubiKeys and this one is not.
+var ErrKeyNotRegistered = errors.New("this host group only accepts registered YubiKeys; register yours with `certifly yubikey` or in Settings → YubiKey")
+
+// ErrKeyRevoked means the YubiKey key was revoked; it is never signed again.
+var ErrKeyRevoked = errors.New("this YubiKey key was revoked; register a new one with `certifly yubikey` or in Settings → YubiKey")
 
 // Result is the outcome for one host group.
 type Result struct {
@@ -87,14 +90,7 @@ func mintSK(ctx context.Context, client *api.Client, ag *sshagent.Agent, cfg con
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("cannot read the YubiKey public key: %w", err)
 	}
-	req := api.SignRequest{HostGroupID: g.ID, PublicKey: strings.TrimSpace(string(pubLine))}
-	if att, err := os.ReadFile(cfg.SKKey + ".attestation"); err == nil {
-		req.Attestation = base64.StdEncoding.EncodeToString(att)
-		if challenge, err := os.ReadFile(cfg.SKKey + ".challenge"); err == nil {
-			req.AttestationChallenge = base64.StdEncoding.EncodeToString(challenge)
-		}
-	}
-	signed, err := client.SignUser(ctx, req)
+	signed, err := signSK(ctx, client, g.ID, string(pubLine))
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -136,31 +132,17 @@ func mintSK(ctx context.Context, client *api.Client, ag *sshagent.Agent, cfg con
 	return cert.ValidPrincipals, time.Unix(int64(cert.ValidBefore), 0), nil
 }
 
-// SecurityKeyCommand prepares an ed25519-sk key on the YubiKey with an attestation over a fresh
-// random challenge, and returns the ssh-keygen command to run with the terminal attached: the person
-// touches the key and may be asked for its PIN. The key handle ends up at path.
-func SecurityKeyCommand() (path string, cmd *exec.Cmd, err error) {
-	dir := config.Dir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", nil, err
+// signSK asks the server to sign the YubiKey's public key, with the refusals about the key itself
+// turned into errors the TUI can explain.
+func signSK(ctx context.Context, client *api.Client, hostGroupID, pubLine string) (api.SignedCertificate, error) {
+	signed, err := client.SignUser(ctx, api.SignRequest{HostGroupID: hostGroupID, PublicKey: strings.TrimSpace(pubLine)})
+	switch {
+	case api.IsCode(err, "ssh_key_not_registered"):
+		return signed, ErrKeyNotRegistered
+	case api.IsCode(err, "ssh_key_revoked"):
+		return signed, ErrKeyRevoked
 	}
-	path = filepath.Join(dir, "id_ed25519_sk")
-	challenge := make([]byte, 32)
-	if _, err := rand.Read(challenge); err != nil {
-		return "", nil, err
-	}
-	if err := config.WriteFileAtomic(path+".challenge", challenge, 0o600); err != nil {
-		return "", nil, err
-	}
-	for _, f := range []string{path, path + ".pub", path + ".attestation"} {
-		_ = os.Remove(f)
-	}
-	if !sshbin.FIDOCapable() {
-		return "", nil, sshbin.ErrNoFIDO
-	}
-	cmd = sshbin.Command("ssh-keygen", "-t", "ed25519-sk", "-O", "application=ssh:certifly", "-O", "challenge="+path+".challenge",
-		"-O", "write-attestation="+path+".attestation", "-N", "", "-C", "certifly:sk", "-f", path)
-	return path, cmd, nil
+	return signed, err
 }
 
 func parseCertificate(line string) (*ssh.Certificate, error) {

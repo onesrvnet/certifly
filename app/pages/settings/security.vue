@@ -4,7 +4,7 @@ import { toast } from 'vue-sonner'
 
 import type { Passkey, Session } from '~/types/api'
 
-/** How you sign in: re-authentication status, passkeys and the devices you are signed in on. */
+/** How you sign in: re-authentication status, passkeys, SSH security keys and the devices you are signed in on. */
 definePageMeta({ titleKey: 'settings.title' })
 
 const { t, d, locale } = useI18n()
@@ -123,6 +123,10 @@ function describeAgent(ua: string | null) {
         </li>
       </ul>
       <p v-else class="rounded-md border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">{{ t('passkeys.empty') }}</p>
+    </SettingsSection>
+
+    <SettingsSection :title="t('sshSecurityKeys.title')" :description="t('sshSecurityKeys.description')">
+      <SshSecurityKeys />
     </SettingsSection>
 
     <SettingsSection :title="t('sessions.title')" :description="t('sessions.description')">

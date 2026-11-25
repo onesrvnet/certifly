@@ -244,7 +244,9 @@ export async function verifyFidoAttestation(params: VerifyFidoAttestationParams)
   }
   const store = trustedStore(params.extra_roots ?? [])
   for (const pem of params.extra_intermediates ?? []) store.intermediates.push(new x509.X509Certificate(pem))
-  if (!(await chainsToRoot(leaf, store, params.now ?? new Date()))) bad('The attestation certificate does not chain to a Yubico root')
+  if (!(await chainsToRoot(leaf, store, params.now ?? new Date()))) {
+    throw new PkiError('untrusted_ssh_attestation', 'The attestation certificate does not chain to a Yubico root')
+  }
 
   const aaguidExt = leaf.getExtension(AAGUID_OID)
   if (aaguidExt) {

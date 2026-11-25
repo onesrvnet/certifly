@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { setup } from '@nuxt/test-utils/e2e'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { addUser, ageSessions, Client, coreContext, query, resetState, serverOptions, setupAdmin, userId } from '../helpers'
+import { addUser, ageSessions, Client, confirmWithCode, coreContext, query, resetState, serverOptions, setupAdmin, userId } from '../helpers'
 import { hasSshKeygen, run, sshWorkdir } from '../support/ssh'
 
 const work = sshWorkdir()
@@ -67,6 +67,18 @@ describe('ssh certificate authorities, access and certificates', async () => {
   }
 
   const asCli = (token: string) => (method: string, body: unknown = {}) => new Client().rpcWithKey(token, method, body)
+
+  /** Register a security key the way the CLI does: start, upload, approve in the browser, poll. */
+  async function registerSecurityKey(user: Client, public_key: string, hostname = 'laptop') {
+    const cli = asCli((await cliToken(user, hostname)).token)
+    const start = (await cli('ssh_security_key_enrollments.start')).body
+    const submitted = await cli('ssh_security_key_enrollments.submit', { enrollment_id: start.enrollment_id, public_key })
+    expect(submitted.status).toBe(200)
+    expect((await user.rpc('ssh_security_key_enrollments.approve', { enrollment_id: start.enrollment_id })).status).toBe(200)
+    const poll = (await cli('ssh_security_key_enrollments.poll', { enrollment_id: start.enrollment_id })).body
+    expect(poll.status).toBe('approved')
+    return { cli, start, key: poll.key }
+  }
 
   describe('command-line sign-in', () => {
     it('starts, waits for approval, hands the token out once, and signs out', async () => {
@@ -138,7 +150,7 @@ describe('ssh certificate authorities, access and certificates', async () => {
       expect((await w.dev.rpc('cli_logins.approve', { login_id: second.login_id })).status).toBe(404)
     })
 
-    it('lets only a browser session approve, and confines the token to its four endpoints', async () => {
+    it('lets only a browser session approve, and confines the token to its endpoints', async () => {
       const w = await world()
       const key = (await w.dev.rpc('api_keys.create', { name: 'ci' })).body.data
       const { token } = await cliToken(w.dev)
@@ -324,40 +336,54 @@ describe('ssh certificate authorities, access and certificates', async () => {
       expect([stale.status, stale.body.error?.code]).toEqual([403, 'reauth_required'])
     })
 
-    ssh('enforces the key policy and attestation errors', async () => {
+    ssh('signs security keys only when they are registered, and refuses revoked ones', async () => {
       const w = await world()
       const secure = (await w.admin.rpc('ssh_host_groups.create', { name: 'Secure', slug: 'secure', ssh_ca_id: w.ca.id, host_patterns: ['*.secure.corp'], key_policy: 'sk' })).body.data
       const attested = (await w.admin.rpc('ssh_host_groups.create', { name: 'Attested', slug: 'attested', ssh_ca_id: w.ca.id, host_patterns: ['*.att.corp'], key_policy: 'sk_attested' })).body.data
       for (const id of [secure.id, attested.id]) await w.admin.rpc('ssh_access_rules.create', { host_group_id: id, group_id: w.group.id, logins: ['root'] })
       const plain = work.keygen('plain')
       const sk = skLine(plain.pub)
-      const sign = (host_group_id: string, body: object) => w.dev.rpc('ssh_user_certificates.sign', { host_group_id, ...body })
+      const sign = (host_group_id: string, body: object, as: Client = w.dev) => as.rpc('ssh_user_certificates.sign', { host_group_id, ...body })
 
       // A throwaway key is not enough where a security key is required.
       let answer = await sign(secure.id, { public_key: plain.pub })
       expect([answer.status, answer.body.error.code]).toEqual([400, 'ssh_key_policy'])
-      // A security key is accepted under `sk`, with or without an attestation that is not required.
+      // Any security key is not enough either: it has to be registered.
+      answer = await sign(secure.id, { public_key: sk })
+      expect([answer.status, answer.body.error.code]).toEqual([403, 'ssh_key_not_registered'])
+      // Old CLIs still send an attestation with the request; it no longer counts for anything.
+      answer = await sign(secure.id, { public_key: sk, attestation: Buffer.from('x').toString('base64'), attestation_challenge: randomBytes(32).toString('base64') })
+      expect(answer.body.error.code).toBe('ssh_key_not_registered')
+
+      const { key } = await registerSecurityKey(w.dev, sk)
+      expect(key).toMatchObject({ fingerprint: expect.stringMatching(/^SHA256:/), attested: false, model: null, name: 'laptop' })
       expect((await sign(secure.id, { public_key: sk })).status).toBe(200)
-      // Under `sk_attested` a key without an attestation is refused.
+      const [used] = await query()`select last_used_at from ssh_security_keys where id = ${key.id}`
+      expect(used!.last_used_at).not.toBeNull()
+      // `sk_attested` needs a key registered with a genuine Yubico attestation.
       answer = await sign(attested.id, { public_key: sk })
       expect([answer.status, answer.body.error.code]).toEqual([400, 'ssh_key_policy'])
-      // Garbage attestations are refused: not a Yubico chain, bad base64, missing challenge, plain key.
-      const challenge = randomBytes(32).toString('base64')
-      for (const body of [
-        { public_key: sk, attestation: Buffer.from('nonsense').toString('base64'), attestation_challenge: challenge },
-        { public_key: sk, attestation: '!!!', attestation_challenge: challenge },
-        { public_key: sk, attestation: Buffer.from('x').toString('base64') },
-        { public_key: sk, attestation: Buffer.from('x').toString('base64'), attestation_challenge: Buffer.alloc(8).toString('base64') },
-      ]) {
-        const refused = await sign(attested.id, body)
-        expect([refused.status, refused.body.error.code]).toEqual([400, 'ssh_attestation_invalid'])
+      await query()`update ssh_security_keys set attested = true where id = ${key.id}`
+      expect((await sign(attested.id, { public_key: sk })).status).toBe(200)
+
+      // Someone else's registered key is not the person's own.
+      await w.admin.rpc('group_members.create', { group_id: w.group.id, user_id: await userId(w.operator) })
+      answer = await sign(secure.id, { public_key: sk }, w.operator)
+      expect(answer.body.error.code).toBe('ssh_key_not_registered')
+      // An admin signing for the person uses the person's keys, not their own.
+      const forDev = await sign(secure.id, { public_key: sk, for_user_id: w.devId }, w.admin)
+      expect(forDev.status).toBe(200)
+      const adminSk = skLine(work.keygen('admin-plain').pub)
+      await registerSecurityKey(w.admin, adminSk)
+      answer = await sign(secure.id, { public_key: adminSk, for_user_id: w.devId }, w.admin)
+      expect(answer.body.error.code).toBe('ssh_key_not_registered')
+
+      // A revoked key is never signed again, also where any key would do.
+      expect((await w.dev.rpc('ssh_security_keys.revoke', { id: key.id })).status).toBe(200)
+      for (const group of [secure.id, w.hostGroup.id]) {
+        answer = await sign(group, { public_key: sk })
+        expect([answer.status, answer.body.error.code]).toEqual([400, 'ssh_key_revoked'])
       }
-      // Only a security key can be attested, whatever the policy.
-      const plainAttested = await sign(w.hostGroup.id, { public_key: plain.pub, attestation: Buffer.from('x').toString('base64'), attestation_challenge: challenge })
-      expect([plainAttested.status, plainAttested.body.error.code]).toEqual([400, 'ssh_attestation_invalid'])
-      // Also refused where attestation is optional, because a bad one is never ignored.
-      const optional = await sign(secure.id, { public_key: sk, attestation: Buffer.from('nonsense').toString('base64'), attestation_challenge: challenge })
-      expect(optional.body.error.code).toBe('ssh_attestation_invalid')
     })
 
     ssh('lists the reachable hosts with the logins held there', async () => {
@@ -371,6 +397,124 @@ describe('ssh certificate authorities, access and certificates', async () => {
       ])
       expect((await w.outsider.rpc('ssh_hosts.reachable')).body.data).toEqual([])
       expect((await w.dev.rpc('ssh_hosts.reachable', { limit: 501 })).status).toBe(400)
+    })
+  })
+
+  describe('security key registration', () => {
+    ssh('registers a key only after the person approves it in their browser', async () => {
+      const w = await world()
+      const sk = skLine(work.keygen('reg').pub)
+      const apiKey = (await w.dev.rpc('api_keys.create', { name: 'ci' })).body.data
+      // Only a command-line session starts a registration.
+      expect((await w.dev.rpc('ssh_security_key_enrollments.start')).status).toBe(403)
+      expect((await new Client().rpcWithKey(apiKey.secret, 'ssh_security_key_enrollments.start', {})).status).toBe(403)
+
+      const cli = asCli((await cliToken(w.dev)).token)
+      const start = (await cli('ssh_security_key_enrollments.start')).body
+      expect(Buffer.from(start.challenge, 'base64').byteLength).toBe(32)
+      expect(start.user_code).toMatch(/^[A-Z]{4}-[A-Z]{4}$/)
+      expect(start.browser_url).toBe(`${process.env.URL}/cli/security-key/${start.enrollment_id}`)
+      const enrollment_id = start.enrollment_id
+
+      // Plain keys and broken attestations are refused, and leave the registration open.
+      let answer = await cli('ssh_security_key_enrollments.submit', { enrollment_id, public_key: work.keygen('reg-plain').pub })
+      expect([answer.status, answer.body.error.code]).toEqual([400, 'ssh_key_type'])
+      answer = await cli('ssh_security_key_enrollments.submit', { enrollment_id, public_key: sk, attestation: Buffer.from('nonsense').toString('base64') })
+      expect([answer.status, answer.body.error.code]).toEqual([400, 'ssh_attestation_invalid'])
+      answer = await cli('ssh_security_key_enrollments.submit', { enrollment_id, public_key: sk, attestation: '!!!' })
+      expect([answer.status, answer.body.error.code]).toEqual([400, 'ssh_attestation_invalid'])
+      // Another CLI session of the same person cannot take it over.
+      const other = asCli((await cliToken(w.dev, 'other')).token)
+      expect((await other('ssh_security_key_enrollments.submit', { enrollment_id, public_key: sk })).status).toBe(404)
+      expect((await other('ssh_security_key_enrollments.poll', { enrollment_id })).status).toBe(404)
+
+      answer = await cli('ssh_security_key_enrollments.submit', { enrollment_id, public_key: sk, name: 'Backup key' })
+      expect(answer.status).toBe(200)
+      expect(answer.body.data).toMatchObject({ status: 'pending', name: 'Backup key', attested: false, model: null, machine: { hostname: 'laptop', os: 'darwin' } })
+      answer = await cli('ssh_security_key_enrollments.submit', { enrollment_id, public_key: sk })
+      expect([answer.status, answer.body.error.code]).toEqual([409, 'ssh_key_enrollment_used'])
+      expect((await cli('ssh_security_key_enrollments.poll', { enrollment_id })).body).toEqual({ status: 'pending' })
+
+      // Only the person sees it, and only their browser session approves it, freshly confirmed.
+      expect((await w.outsider.rpc('ssh_security_key_enrollments.get', { enrollment_id })).status).toBe(404)
+      expect((await w.dev.rpc('ssh_security_key_enrollments.get', { enrollment_id })).body.data).toMatchObject({ user_code: start.user_code, fingerprint: expect.stringMatching(/^SHA256:/) })
+      expect((await new Client().rpcWithKey(apiKey.secret, 'ssh_security_key_enrollments.approve', { enrollment_id })).status).toBe(403)
+      answer = await cli('ssh_security_key_enrollments.approve', { enrollment_id })
+      expect([answer.status, answer.body.error.code]).toEqual([403, 'cli_token_endpoint'])
+      expect((await w.outsider.rpc('ssh_security_key_enrollments.approve', { enrollment_id })).status).toBe(404)
+      await ageSessions(11)
+      answer = await w.dev.rpc('ssh_security_key_enrollments.approve', { enrollment_id })
+      expect([answer.status, answer.body.error.code]).toEqual([403, 'reauth_required'])
+      await confirmWithCode(w.dev, 'dev@example.com')
+      expect((await w.dev.rpc('ssh_security_key_enrollments.approve', { enrollment_id })).body.data.status).toBe('approved')
+
+      const poll = (await cli('ssh_security_key_enrollments.poll', { enrollment_id })).body
+      expect(poll).toMatchObject({ status: 'approved', key: { name: 'Backup key', public_key: sk, attested: false } })
+      const [event] = await query()`select actor_id from events where name = 'ssh_security_keys.create'`
+      expect(event!.actor_id).toBe(w.devId)
+
+      // A key is registered once.
+      const again = (await cli('ssh_security_key_enrollments.start')).body
+      answer = await cli('ssh_security_key_enrollments.submit', { enrollment_id: again.enrollment_id, public_key: sk })
+      expect([answer.status, answer.body.error.code]).toEqual([409, 'ssh_key_already_registered'])
+    })
+
+    ssh('denies and expires registrations', async () => {
+      const w = await world()
+      const cli = asCli((await cliToken(w.dev)).token)
+      const sk = skLine(work.keygen('deny').pub)
+      const denied = (await cli('ssh_security_key_enrollments.start')).body
+      await cli('ssh_security_key_enrollments.submit', { enrollment_id: denied.enrollment_id, public_key: sk })
+      expect((await w.dev.rpc('ssh_security_key_enrollments.deny', { enrollment_id: denied.enrollment_id })).body.data.status).toBe('denied')
+      let answer = await cli('ssh_security_key_enrollments.poll', { enrollment_id: denied.enrollment_id })
+      expect([answer.status, answer.body.error.code]).toEqual([403, 'ssh_key_enrollment_denied'])
+      // Approving afterwards changes nothing.
+      expect((await w.dev.rpc('ssh_security_key_enrollments.approve', { enrollment_id: denied.enrollment_id })).body.data.status).toBe('denied')
+      expect(await query()`select id from ssh_security_keys`).toHaveLength(0)
+
+      const late = (await cli('ssh_security_key_enrollments.start')).body
+      await query()`update ssh_security_key_enrollments set expires_at = now() - interval '1 minute' where id = ${late.enrollment_id}`
+      answer = await cli('ssh_security_key_enrollments.submit', { enrollment_id: late.enrollment_id, public_key: sk })
+      expect([answer.status, answer.body.error.code]).toEqual([404, 'ssh_key_enrollment_expired'])
+      answer = await cli('ssh_security_key_enrollments.poll', { enrollment_id: late.enrollment_id })
+      expect([answer.status, answer.body.error.code]).toEqual([410, 'ssh_key_enrollment_expired'])
+      expect((await w.dev.rpc('ssh_security_key_enrollments.get', { enrollment_id: late.enrollment_id })).status).toBe(404)
+    })
+
+    ssh('lists, renames and revokes keys, and revokes their certificates', async () => {
+      const w = await world()
+      const sk = skLine(work.keygen('list').pub)
+      const { key } = await registerSecurityKey(w.dev, sk)
+      for (let i = 0; i < 2; i++) expect((await w.dev.rpc('ssh_user_certificates.sign', { host_group_id: w.hostGroup.id, public_key: sk })).status).toBe(200)
+      const apiKey = (await w.dev.rpc('api_keys.create', { name: 'ci' })).body.data
+
+      const own = (await w.dev.rpc('ssh_security_keys.list')).body.data
+      expect(own).toEqual([expect.objectContaining({ id: key.id, active_certificates: 2, revoked_at: null, permissions: { update: true, revoke: true } })])
+      // Other people's keys are not found; admins see them but only revoke them.
+      for (const client of [w.outsider, w.operator]) expect((await client.rpc('ssh_security_keys.list', { user_id: w.devId })).status).toBe(404)
+      expect((await new Client().rpcWithKey(apiKey.secret, 'ssh_security_keys.list', {})).status).toBe(403)
+      expect((await w.admin.rpc('ssh_security_keys.list', { user_id: w.devId })).body.data).toEqual([expect.objectContaining({ id: key.id, permissions: { update: false, revoke: true } })])
+
+      expect((await w.dev.rpc('ssh_security_keys.update', { id: key.id, name: 'mbp' })).body.data.name).toBe('mbp')
+      expect((await w.admin.rpc('ssh_security_keys.update', { id: key.id, name: 'x' })).status).toBe(403)
+      expect((await new Client().rpcWithKey(apiKey.secret, 'ssh_security_keys.update', { id: key.id, name: 'x' })).status).toBe(404)
+
+      expect((await w.outsider.rpc('ssh_security_keys.revoke', { id: key.id })).status).toBe(404)
+      expect((await new Client().rpcWithKey(apiKey.secret, 'ssh_security_keys.revoke', { id: key.id })).status).toBe(404)
+      await ageSessions(11)
+      const stale = await w.admin.rpc('ssh_security_keys.revoke', { id: key.id })
+      expect([stale.status, stale.body.error.code]).toEqual([403, 'reauth_required'])
+      await confirmWithCode(w.admin, 'admin@example.com')
+      const [before] = await query()`select version from ssh_krls`
+      const revoked = (await w.admin.rpc('ssh_security_keys.revoke', { id: key.id })).body.data
+      expect(revoked).toMatchObject({ revoked_by: { id: await userId(w.admin) }, active_certificates: 0, permissions: { update: false, revoke: false } })
+      expect(await query()`select id from ssh_certificates where fingerprint = ${key.fingerprint} and revoked_at is null`).toHaveLength(0)
+      const [after] = await query()`select version from ssh_krls`
+      expect(BigInt(after!.version)).toBeGreaterThan(BigInt(before?.version ?? 0))
+      const [event] = await query()`select data from events where name = 'ssh_security_keys.revoke'`
+      expect(event!.data).toMatchObject({ certificates: 2 })
+      // Revoking twice is harmless.
+      expect((await w.admin.rpc('ssh_security_keys.revoke', { id: key.id })).status).toBe(200)
     })
   })
 

@@ -107,18 +107,30 @@ func (m certsModel) View(width int, spin string) string {
 		for _, l := range g.Logins {
 			ls = append(ls, t.Strong.Render(l))
 		}
+		res, failed := m.results[g.Slug]
+		failed = failed && res.Err != nil
+		notRegistered := failed && (errors.Is(res.Err, certs.ErrKeyNotRegistered) || errors.Is(res.Err, certs.ErrKeyRevoked))
+		if notRegistered {
+			key = t.Warn.Render("YubiKey, not registered")
+			if errors.Is(res.Err, certs.ErrKeyRevoked) {
+				key = t.Warn.Render("YubiKey, revoked")
+			}
+		}
 		lines := []string{
 			row("Certificate", status),
 			row("Key", key),
 			row("Log in as", strings.Join(ls, " ")),
 			row("Lifetime", t.Dim.Render("up to "+shortDuration(time.Duration(g.MaxTTLSeconds)*time.Second))),
 		}
-		if r, ok := m.results[g.Slug]; ok && r.Err != nil {
-			msg := r.Err.Error()
+		switch {
+		case notRegistered:
+			lines = append(lines, t.Warn.Render("! This host group only accepts registered YubiKeys."), "  "+t.Dim.Render("Settings → YubiKey → Register"))
+		case failed:
+			msg := res.Err.Error()
 			switch {
-			case errors.Is(r.Err, sshbin.ErrNoFIDO):
+			case errors.Is(res.Err, sshbin.ErrNoFIDO):
 				msg = "needs an OpenSSH with YubiKey support: " + sshbin.InstallHint()
-			case errors.Is(r.Err, certs.ErrNoSecurityKey):
+			case errors.Is(res.Err, certs.ErrNoSecurityKey):
 				msg = "needs a YubiKey key: Settings, then y"
 			}
 			lines = append(lines, t.Bad.Render("✗ "+msg))

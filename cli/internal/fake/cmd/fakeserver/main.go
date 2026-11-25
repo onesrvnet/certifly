@@ -16,7 +16,7 @@ func main() {
 	srv := fake.New()
 	defer srv.Close()
 	fmt.Println("fake certifly at", srv.URL)
-	fmt.Println("logins are approved after the first poll; the prod host group requires a YubiKey key")
+	fmt.Println("logins and YubiKey registrations are approved after the first poll; the prod host group requires a registered YubiKey")
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	<-stop

@@ -230,6 +230,21 @@ export const sshCertificatePolicy = new PolicySet<Actor, SshCertificateSubject |
   sign_for_others: canRunCaLifecycle,
 })
 
+interface SshSecurityKeySubject {
+  user_id: string
+}
+
+/**
+ * Registered security keys. People read, rename and revoke their own; admins read and revoke
+ * anyone's. API keys do none of it, so a leaked key cannot unregister a YubiKey or learn which
+ * ones exist. Registering is not here: only the person's own browser session approves a key.
+ */
+export const sshSecurityKeyPolicy = new PolicySet<Actor, SshSecurityKeySubject, 'read' | 'update' | 'revoke'>({
+  read: (actor, key) => actor.kind !== 'api_key' && (key.user_id === actor.id || isAdmin(actor)),
+  update: (actor, key) => actor.kind !== 'api_key' && key.user_id === actor.id,
+  revoke: (actor, key) => actor.kind !== 'api_key' && (key.user_id === actor.id || isAdmin(actor)),
+})
+
 /** Throw a 403 unless the policy allows the action. */
 export function authorize<A, S, Action extends string>(
   policy: PolicySet<A, S, Action>,

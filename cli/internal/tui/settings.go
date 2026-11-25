@@ -2,29 +2,64 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
+	"os/exec"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/onesrvnet/certifly/cli/internal/api"
 	"github.com/onesrvnet/certifly/cli/internal/app"
 	"github.com/onesrvnet/certifly/cli/internal/certs"
 	"github.com/onesrvnet/certifly/cli/internal/config"
+	"github.com/onesrvnet/certifly/cli/internal/session"
 	"github.com/onesrvnet/certifly/cli/internal/sshbin"
 )
 
 type (
 	settingsSavedMsg struct{}
 	signedOutMsg     struct{}
-	skCreatedMsg     struct {
+	settingsErrMsg   struct{ err error }
+	// The steps of registering a YubiKey.
+	regStartedMsg struct {
+		reg    *certs.Registration
+		keygen *exec.Cmd
+		err    error
+	}
+	regKeyMadeMsg   struct{ err error }
+	regSubmittedMsg struct {
+		opened bool
+		err    error
+	}
+	regDoneMsg struct {
+		key  api.SecurityKey
 		path string
 		err  error
 	}
+	// skRegisteredMsg tells the main screen a YubiKey was registered, to renew its certificates.
+	skRegisteredMsg struct{ name string }
 )
+
+type regStep int
+
+const (
+	regStarting regStep = iota
+	regUploading
+	regWaiting
+)
+
+// registering is a YubiKey registration shown in Settings.
+type registering struct {
+	reg    *certs.Registration
+	step   regStep
+	opened bool
+	cancel context.CancelFunc
+	err    error
+}
 
 // settingsModel shows the account and settings; `e` edits them in a form.
 type settingsModel struct {
@@ -37,6 +72,7 @@ type settingsModel struct {
 	form    *huh.Form
 	draft   settingsDraft
 	confirm bool // asking before signing out
+	reg     *registering
 	err     error
 }
 
@@ -59,7 +95,7 @@ func (m *settingsModel) setSize(w, h int) {
 	}
 }
 
-func (m settingsModel) editing() bool { return m.form != nil || m.confirm }
+func (m settingsModel) editing() bool { return m.form != nil || m.confirm || m.reg != nil }
 
 func (m settingsModel) focus() tea.Cmd { return nil }
 
@@ -110,7 +146,7 @@ func (m settingsModel) save() tea.Cmd {
 		if d.integration != a.Config.SSHIntegration {
 			// Certificates move to the other agent: drop them from the old one and renew.
 			if err := a.SetSSHIntegration(d.integration, groups); err != nil {
-				return skCreatedMsg{err: err}
+				return settingsErrMsg{err: err}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
@@ -118,29 +154,145 @@ func (m settingsModel) save() tea.Cmd {
 		}
 		if serverChanged {
 			if err := a.SetServer(d.server); err != nil {
-				return skCreatedMsg{err: err}
+				return settingsErrMsg{err: err}
 			}
 			if !a.SignedIn() {
 				return signedOutMsg{}
 			}
 		} else if err := a.Config.Save(); err != nil {
-			return skCreatedMsg{err: err}
+			return settingsErrMsg{err: err}
 		}
 		return settingsSavedMsg{}
 	}
 }
 
-func (m settingsModel) Update(msg tea.Msg) (settingsModel, tea.Cmd) {
-	if done, ok := msg.(skCreatedMsg); ok {
-		m.err = done.err
-		if done.err == nil && done.path != "" {
-			m.app.Config.SKKey = done.path
-			if err := m.app.Config.Save(); err != nil {
-				m.err = err
-			}
-			return m, func() tea.Msg { return settingsSavedMsg{} }
+// startRegistration asks the server for a challenge; the key is made once it arrives.
+func (m *settingsModel) startRegistration() tea.Cmd {
+	m.err = nil
+	m.reg = &registering{}
+	client := m.app.Client()
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		reg, keygen, err := certs.StartRegistration(ctx, client)
+		return regStartedMsg{reg: reg, keygen: keygen, err: err}
+	}
+}
+
+// stopRegistration cancels the waiting and removes the unfinished key.
+func (m *settingsModel) stopRegistration() {
+	if m.reg == nil {
+		return
+	}
+	if m.reg.cancel != nil {
+		m.reg.cancel()
+	}
+	if m.reg.reg != nil {
+		m.reg.reg.Discard()
+	}
+	m.reg = nil
+}
+
+// updateRegistration runs the registration steps: make the key, upload it, wait for approval.
+func (m settingsModel) updateRegistration(msg tea.Msg) (settingsModel, tea.Cmd) {
+	r := m.reg
+	fail := func(err error) (settingsModel, tea.Cmd) {
+		if r.reg != nil {
+			r.reg.Discard()
 		}
+		r.err = err
 		return m, nil
+	}
+	switch msg := msg.(type) {
+	case regStartedMsg:
+		if msg.err != nil {
+			return fail(msg.err)
+		}
+		r.reg = msg.reg
+		return m, tea.ExecProcess(msg.keygen, func(err error) tea.Msg {
+			if err != nil {
+				return regKeyMadeMsg{err: fmt.Errorf("ssh-keygen: %w", err)}
+			}
+			return regKeyMadeMsg{}
+		})
+	case regKeyMadeMsg:
+		if msg.err != nil {
+			return fail(msg.err)
+		}
+		r.step = regUploading
+		reg, client := r.reg, m.app.Client()
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := reg.Submit(ctx, client, ""); err != nil {
+				return regSubmittedMsg{err: err}
+			}
+			return regSubmittedMsg{opened: session.OpenBrowser(reg.BrowserURL)}
+		}
+	case regSubmittedMsg:
+		if msg.err != nil {
+			return fail(msg.err)
+		}
+		r.step, r.opened = regWaiting, msg.opened
+		ctx, cancel := context.WithDeadline(context.Background(), r.reg.ExpiresAt)
+		r.cancel = cancel
+		reg, client := r.reg, m.app.Client()
+		return m, func() tea.Msg {
+			key, path, err := reg.Wait(ctx, client)
+			return regDoneMsg{key: key, path: path, err: err}
+		}
+	case regDoneMsg:
+		if msg.err != nil {
+			return fail(msg.err)
+		}
+		r.cancel()
+		m.reg = nil
+		m.app.Config.SKKey = msg.path
+		if err := m.app.Config.Save(); err != nil {
+			m.err = err
+			return m, nil
+		}
+		name := msg.key.Name
+		return m, func() tea.Msg { return skRegisteredMsg{name: name} }
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "esc":
+			m.stopRegistration()
+		case "enter":
+			if r.err != nil {
+				m.stopRegistration()
+				return m, m.startRegistration()
+			}
+		case "c":
+			if r.step == regWaiting && r.err == nil {
+				return m, tea.SetClipboard(r.reg.BrowserURL)
+			}
+		case "o":
+			if r.step == regWaiting && r.err == nil {
+				session.OpenBrowser(r.reg.BrowserURL)
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m settingsModel) Update(msg tea.Msg) (settingsModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case settingsErrMsg:
+		m.err = msg.err
+		return m, nil
+	case regStartedMsg, regKeyMadeMsg, regSubmittedMsg, regDoneMsg:
+		// A cancelled registration may still answer; nothing waits for it any more.
+		if m.reg == nil {
+			if started, ok := msg.(regStartedMsg); ok && started.reg != nil {
+				started.reg.Discard()
+			}
+			return m, nil
+		}
+		return m.updateRegistration(msg)
+	}
+	if m.reg != nil {
+		return m.updateRegistration(msg)
 	}
 	if m.confirm {
 		if key, ok := msg.(tea.KeyPressMsg); ok {
@@ -187,19 +339,11 @@ func (m settingsModel) Update(msg tea.Msg) (settingsModel, tea.Cmd) {
 				return m, tea.SetClipboard(sshbin.InstallHint())
 			}
 		case "y":
-			path, cmd, err := certs.SecurityKeyCommand()
-			if err != nil {
-				m.err = err
+			if !sshbin.FIDOCapable() {
+				m.err = sshbin.ErrNoFIDO
 				return m, nil
 			}
-			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-				if err == nil {
-					if _, statErr := os.Stat(path + ".pub"); statErr != nil {
-						err = fmt.Errorf("no key was written: %w", statErr)
-					}
-				}
-				return skCreatedMsg{path: path, err: err}
-			})
+			return m, m.startRegistration()
 		case "o":
 			m.confirm = true
 		}
@@ -209,19 +353,28 @@ func (m settingsModel) Update(msg tea.Msg) (settingsModel, tea.Cmd) {
 
 func (m settingsModel) help() [][2]string {
 	switch {
+	case m.reg != nil && m.reg.err != nil:
+		return [][2]string{{"↵", "try again"}, {"esc", "back"}}
+	case m.reg != nil && m.reg.step == regWaiting:
+		return [][2]string{{"c", "copy link"}, {"o", "open again"}, {"esc", "cancel"}}
+	case m.reg != nil:
+		return [][2]string{{"esc", "cancel"}}
 	case m.confirm:
 		return [][2]string{{"y", "sign out"}, {"any key", "cancel"}}
 	case m.form != nil:
 		return [][2]string{{"↵", "next, saves after the last"}, {"shift+tab", "back"}, {"←→", "choose"}, {"esc", "cancel"}}
 	default:
-		return [][2]string{{"e", "edit"}, {"y", "set up YubiKey"}, {"o", "sign out"}, {"1-3", "screens"}, {"q", "quit"}}
+		return [][2]string{{"e", "edit"}, {"y", "register YubiKey"}, {"o", "sign out"}, {"1-3", "screens"}, {"q", "quit"}}
 	}
 }
 
 // View shows the settings as cards: Account, Keys and SSH; `e` turns them into a form.
-func (m settingsModel) View(width int) string {
+func (m settingsModel) View(width int, spin string) string {
 	if m.form != nil {
 		return m.form.View()
+	}
+	if m.reg != nil {
+		return m.viewRegistration(width, spin)
 	}
 	t, c := m.theme, m.app.Config
 	row := func(label, value string) string { return t.Dim.Render(fmt.Sprintf("%-16s", label)) + value }
@@ -247,9 +400,9 @@ func (m settingsModel) View(width int) string {
 	case !sshbin.FIDOCapable():
 		keys = append(keys, row("YubiKey", t.Warn.Render("needs ")+t.Key.Render(sshbin.InstallHint())+t.Dim.Render("  ")+t.Key.Render("c")+t.Dim.Render(" copies it")))
 	case c.SKKey != "":
-		keys = append(keys, row("YubiKey", t.dot("ok")+" set up"))
+		keys = append(keys, row("YubiKey", t.dot("ok")+" set up"+t.Dim.Render("  ")+t.Key.Render("y")+t.Dim.Render(" registers a new one")))
 	default:
-		keys = append(keys, row("YubiKey", t.Dim.Render("not set up, press ")+t.Key.Render("y")))
+		keys = append(keys, row("YubiKey", t.Dim.Render("not registered, press ")+t.Key.Render("y")))
 	}
 	keys = append(keys, row("OpenSSH", t.Dim.Render(sshbin.Find("ssh"))))
 	use := "Only through certifly" + t.Dim.Render("  ~/.ssh untouched")
@@ -268,6 +421,52 @@ func (m settingsModel) View(width int) string {
 		out += "\n\n" + t.Bad.Render("✗ "+m.err.Error())
 	}
 	return out
+}
+
+// viewRegistration is the "Register YubiKey" box: the key made, its model, and the code to approve.
+func (m settingsModel) viewRegistration(width int, spin string) string {
+	t, r := m.theme, m.reg
+	inner := width - 4
+	var b strings.Builder
+	b.WriteString("\n")
+	if r.step >= regUploading {
+		b.WriteString(t.OK.Render("✓") + " Key created on the YubiKey\n")
+	}
+	if r.step == regWaiting {
+		if model := r.reg.Model(); model != "" {
+			b.WriteString(t.OK.Render("✓") + " Genuine " + model + "\n")
+		} else {
+			b.WriteString(t.Warn.Render("!") + " Not attested" + t.Dim.Render("  only for host groups that accept any security key") + "\n")
+		}
+	}
+	switch {
+	case r.err != nil:
+		if r.step >= regUploading {
+			b.WriteString("\n")
+		}
+		msg := r.err.Error()
+		if errors.Is(r.err, sshbin.ErrNoFIDO) {
+			msg = "needs an OpenSSH with YubiKey support: " + sshbin.InstallHint()
+		}
+		b.WriteString(t.Bad.Render("✗ "+msg) + "\n")
+	case r.step == regStarting:
+		b.WriteString(spin + t.Dim.Render(" Asking "+serverHost(m.app.Config.Server)+" for a challenge …") + "\n")
+	case r.step == regUploading:
+		b.WriteString(spin + t.Dim.Render(" Uploading the key …") + "\n")
+	default:
+		if r.opened {
+			b.WriteString("\nApprove it in your browser:\n\n")
+		} else {
+			b.WriteString("\nOpen this link on any device and approve this code:\n\n")
+		}
+		code := strings.Join(strings.Split(r.reg.UserCode, ""), " ")
+		b.WriteString(lipgloss.PlaceHorizontal(inner, lipgloss.Center, t.Code.Render(code)) + "\n\n")
+		b.WriteString(t.Dim.Render(r.reg.BrowserURL) + "\n")
+		left := max(time.Until(r.reg.ExpiresAt).Round(time.Second), 0)
+		b.WriteString(spin + " Waiting for approval  " + t.Dim.Render(fmt.Sprintf("%d:%02d left", int(left.Minutes()), int(left.Seconds())%60)) + "\n")
+	}
+	content := b.String()
+	return t.panel("Register YubiKey", width, lipgloss.Height(content)+2, true, content)
 }
 
 func onOff(v bool) string {

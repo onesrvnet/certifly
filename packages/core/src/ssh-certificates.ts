@@ -1,5 +1,5 @@
 import { type Executor, schema, type Transaction } from '@certifly/db'
-import { buildSshCertificate, formatAuthorizedKey, generateSshSerial, parseAuthorizedKey, PkiError, verifyFidoAttestation, type SshPublicKey } from '@certifly/pki'
+import { buildSshCertificate, formatAuthorizedKey, generateSshSerial, parseAuthorizedKey, PkiError, type SshPublicKey } from '@certifly/pki'
 import { and, count, desc, eq, gt, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm'
 import { eventFor, recordEvent, withTransaction } from './audit'
 import { assertStepUp } from './auth/sessions'
@@ -14,6 +14,7 @@ import { rebuildSshKrl } from './ssh-krl'
 
 export type SshCertificateRow = typeof schema.sshCertificates.$inferSelect
 type HostGroupRow = typeof schema.sshHostGroups.$inferSelect
+type SecurityKeyRow = typeof schema.sshSecurityKeys.$inferSelect
 
 /** The start of validity is this far in the past, so small clock differences do not matter. */
 export const BACKDATE_MS = 2 * 60 * 1000
@@ -120,51 +121,32 @@ export interface SignUserCertificateInput {
   host_group_id: string
   public_key: string
   ttl_seconds?: number
-  /** base64 of the file `ssh-keygen -O write-attestation=` wrote. */
-  attestation?: string
-  /** base64 of the challenge passed to `ssh-keygen -O challenge=`; 32 bytes. */
-  attestation_challenge?: string
   for_user_id?: string
 }
 
-const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/
-
-function decodeBase64(value: string, field: string, maxBytes: number): Uint8Array {
-  if (!BASE64.test(value) || value.length > Math.ceil((maxBytes * 4) / 3) + 4) throw new ValidationError(`${field} is not valid base64`, 'ssh_attestation_invalid')
-  return new Uint8Array(Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64'))
-}
-
 /**
- * Check the host group's key policy against the submitted key and attestation. Returns whether
- * the key was proven to be genuine hardware.
+ * Check the host group's key policy. Where a security key is required, it must be one the person
+ * registered and approved (`ssh_key_not_registered` otherwise); `sk_attested` also needs it to
+ * have been registered with a genuine Yubico attestation. A revoked security key is never signed,
+ * whatever the policy. Returns the person's registered key when the submitted key is one.
  */
-async function checkKeyPolicy(group: HostGroupRow, key: SshPublicKey, input: SignUserCertificateInput): Promise<boolean> {
-  if ((group.key_policy === 'sk' || group.key_policy === 'sk_attested') && !key.sk) {
-    throw new ValidationError('This host group needs a security key (ed25519-sk or ecdsa-sk)', 'ssh_key_policy')
-  }
-  if (input.attestation === undefined) {
-    if (group.key_policy === 'sk_attested') throw new ValidationError('This host group needs an attestation for the security key', 'ssh_key_policy')
-    return false
-  }
-  if (!key.sk) throw new ValidationError('Only security keys can be attested', 'ssh_attestation_invalid')
-  const attestation = decodeBase64(input.attestation, 'attestation', 32 * 1024)
-  if (input.attestation_challenge === undefined) throw new ValidationError('attestation_challenge is required with an attestation', 'ssh_attestation_invalid')
-  const challenge = decodeBase64(input.attestation_challenge, 'attestation_challenge', 64)
-  if (challenge.byteLength !== 32) throw new ValidationError('attestation_challenge must be 32 bytes', 'ssh_attestation_invalid')
-  try {
-    await verifyFidoAttestation({ attestation, key, challenge })
-    return true
-  } catch (error) {
-    if (error instanceof PkiError) throw new ValidationError(error.message, 'ssh_attestation_invalid')
-    throw error
-  }
+async function checkKeyPolicy(db: Executor, group: HostGroupRow, user_id: string, key: SshPublicKey): Promise<SecurityKeyRow | null> {
+  const k = schema.sshSecurityKeys
+  const [registered] = key.sk ? await db.select().from(k).where(eq(k.fingerprint, key.fingerprint)) : []
+  if (registered?.revoked_at) throw new ValidationError('This security key was revoked', 'ssh_key_revoked')
+  const own = registered && registered.user_id === user_id ? registered : null
+  if (group.key_policy === 'any') return own
+  if (!key.sk) throw new ValidationError('This host group needs a security key (ed25519-sk or ecdsa-sk)', 'ssh_key_policy')
+  if (!own) throw new AuthorizationError('This security key is not registered. Register it with the certifly CLI first.', 'ssh_key_not_registered')
+  if (group.key_policy === 'sk_attested' && !own.attested) throw new ValidationError('This host group needs a YubiKey registered with a genuine Yubico attestation', 'ssh_key_policy')
+  return own
 }
 
 /**
  * Sign a person's public key for one host group. The key must satisfy the group's key policy,
  * the person needs at least one login in the group (through their groups), and the lifetime
  * may not exceed the group's maximum. Operators and admins may sign for someone else
- * (`for_user_id`); that person's own access rules apply.
+ * (`for_user_id`); that person's own access rules and registered security keys apply.
  */
 export async function signUserCertificate(ctx: Context, actor: Actor, input: SignUserCertificateInput) {
   const target_id = input.for_user_id ?? actor.id
@@ -186,7 +168,8 @@ export async function signUserCertificate(ctx: Context, actor: Actor, input: Sig
   const ttl = input.ttl_seconds ?? group.user_ttl_default_seconds
   if (!Number.isInteger(ttl) || ttl < 60) throw new ValidationError('ttl_seconds must be a whole number of at least 60', 'invalid_ttl')
   if (ttl > group.user_ttl_max_seconds) throw new ValidationError(`The longest lifetime in this host group is ${group.user_ttl_max_seconds} seconds`, 'ttl_too_long', { max_ttl_seconds: group.user_ttl_max_seconds })
-  const attested = await checkKeyPolicy(group, public_key, input)
+  const security_key = await checkKeyPolicy(ctx.db, group, user.id, public_key)
+  const attested = security_key?.attested ?? false
   // A CLI renewing for its own person replaces its earlier certificate; other machines keep theirs.
   let machine: string | null = null
   if (actor.cli_session_id && !for_others) {
@@ -211,6 +194,7 @@ export async function signUserCertificate(ctx: Context, actor: Actor, input: Sig
       machine,
       attested,
     })
+    if (security_key) await tx.update(schema.sshSecurityKeys).set({ last_used_at: new Date() }).where(eq(schema.sshSecurityKeys.id, security_key.id))
     if (machine) {
       const c = schema.sshCertificates
       const older = await tx

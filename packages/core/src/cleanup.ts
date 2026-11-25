@@ -57,6 +57,10 @@ export async function cleanupExpired(ctx: Context, now = new Date()) {
     .delete(schema.cliSessions)
     .where(or(lt(schema.cliSessions.expires_at, ago(RETENTION.shortLivedMs)), and(isNotNull(schema.cliSessions.revoked_at), lt(schema.cliSessions.revoked_at, ago(RETENTION.shortLivedMs)))))
     .returning({ id: schema.cliSessions.id })
+  const keyEnrollments = await ctx.db
+    .delete(schema.sshSecurityKeyEnrollments)
+    .where(lt(schema.sshSecurityKeyEnrollments.expires_at, ago(RETENTION.shortLivedMs)))
+    .returning({ id: schema.sshSecurityKeyEnrollments.id })
   const hostChallenges = await ctx.db.delete(schema.sshHostChallenges).where(lt(schema.sshHostChallenges.expires_at, ago(RETENTION.shortLivedMs))).returning({ id: schema.sshHostChallenges.id })
   const joinTokens = await ctx.db.delete(schema.sshJoinTokens).where(lt(schema.sshJoinTokens.expires_at, ago(RETENTION.inviteMs))).returning({ id: schema.sshJoinTokens.id })
 
@@ -71,6 +75,7 @@ export async function cleanupExpired(ctx: Context, now = new Date()) {
     cli_logins: cliLogins.length,
     cli_sessions: cliSessions.length,
     ssh_host_challenges: hostChallenges.length,
+    ssh_security_key_enrollments: keyEnrollments.length,
     ssh_join_tokens: joinTokens.length,
     acme_nonces: acmeNonces,
     acme_orders: acmeOrders,

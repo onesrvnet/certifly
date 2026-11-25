@@ -254,7 +254,7 @@ export interface RpcInput {
   }
   'ssh_certificates.get': { id: string }
   'ssh_certificates.revoke': { id: string; reason?: string }
-  'ssh_user_certificates.sign': { host_group_id: string; public_key: string; ttl_seconds?: number; attestation?: string; attestation_challenge?: string; for_user_id?: string }
+  'ssh_user_certificates.sign': { host_group_id: string; public_key: string; ttl_seconds?: number; for_user_id?: string }
   'ssh_access.get': Record<string, never>
   'ssh_hosts.reachable': { cursor?: string; limit?: number }
   'cli_logins.get': { login_id: string }
@@ -262,6 +262,12 @@ export interface RpcInput {
   'cli_logins.deny': { login_id: string }
   'cli_sessions.list': Record<string, never>
   'cli_sessions.delete': { id?: string }
+  'ssh_security_key_enrollments.get': { enrollment_id: string }
+  'ssh_security_key_enrollments.approve': { enrollment_id: string }
+  'ssh_security_key_enrollments.deny': { enrollment_id: string }
+  'ssh_security_keys.list': { user_id?: string }
+  'ssh_security_keys.update': { id: string; name: string }
+  'ssh_security_keys.revoke': { id: string }
 }
 
 export type RpcName = keyof RpcInput
@@ -314,6 +320,8 @@ export type SshJoinToken = RpcOutput<'ssh_join_tokens.list'>['data'][number]
 export type SshCertificate = RpcOutput<'ssh_certificates.list'>['data'][number]
 export type CliLogin = RpcOutput<'cli_logins.get'>['data']
 export type CliSession = RpcOutput<'cli_sessions.list'>['data'][number]
+export type SshSecurityKey = RpcOutput<'ssh_security_keys.list'>['data'][number]
+export type SshSecurityKeyEnrollment = RpcOutput<'ssh_security_key_enrollments.get'>['data']
 
 export type CertificateSort = 'newest' | 'expiry' | 'name'
 export type CertificateGroupBy = 'tag' | 'template' | 'ca' | 'status'

@@ -54,6 +54,8 @@ const { data: invites, refresh: refreshInvites } = await useAsyncData(
 )
 
 const busy = ref<string | null>(null)
+/** The person whose SSH security keys are shown. */
+const keysOf = ref<Member | null>(null)
 /** The server refuses to remove the last admin; this says so next to the table, not just in a toast. */
 const lastAdmin = ref(false)
 const lastAdminMessage = errorMessage(new RpcError(409, 'last_admin', ''))
@@ -194,14 +196,15 @@ const revokeInvite = useAction(async () => {
                 {{ member.last_active_at ? timeAgo(member.last_active_at, locale) : '—' }}
               </TableCell>
               <TableCell class="text-right">
-                <DropdownMenu v-if="auth.can(member.id, member.deleted_at ? 'reactivate' : 'deactivate') || auth.can(member.id, 'set_username')">
+                <DropdownMenu>
                   <DropdownMenuTrigger as-child>
                     <Button variant="ghost" size="icon-sm" :icon="EllipsisIcon" :loading="busy === member.id" :aria-label="t('users.more')" />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem v-if="auth.can(member.id, 'set_username') && !member.deleted_at" @select="openUsername(member)">{{ t('users.editUsername') }}</DropdownMenuItem>
-                    <DropdownMenuItem v-if="member.deleted_at" @select="reactivate(member)">{{ t('users.reactivate') }}</DropdownMenuItem>
-                    <DropdownMenuItem v-else variant="destructive" @select="confirming = member">{{ t('users.deactivate') }}</DropdownMenuItem>
+                    <DropdownMenuItem @select="keysOf = member">{{ t('users.securityKeys') }}</DropdownMenuItem>
+                    <DropdownMenuItem v-if="member.deleted_at && auth.can(member.id, 'reactivate')" @select="reactivate(member)">{{ t('users.reactivate') }}</DropdownMenuItem>
+                    <DropdownMenuItem v-else-if="!member.deleted_at && auth.can(member.id, 'deactivate')" variant="destructive" @select="confirming = member">{{ t('users.deactivate') }}</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </TableCell>
@@ -237,6 +240,16 @@ const revokeInvite = useAction(async () => {
       </ul>
       <p v-else class="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">{{ t('users.invitesEmpty') }}</p>
     </SettingsSection>
+
+    <Dialog :open="!!keysOf" @update:open="(open) => !open && (keysOf = null)">
+      <DialogContent class="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{{ t('sshSecurityKeys.title') }}</DialogTitle>
+          <DialogDescription>{{ t('sshSecurityKeys.userDescription', { name: keysOf?.name ?? '' }) }}</DialogDescription>
+        </DialogHeader>
+        <SshSecurityKeys v-if="keysOf" :user="keysOf" />
+      </DialogContent>
+    </Dialog>
 
     <Dialog :open="!!confirming" @update:open="(open) => !open && (confirming = null)">
       <DialogContent class="sm:max-w-md">
